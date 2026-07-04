@@ -20,6 +20,9 @@ dist-ssr
 # Android SDK (downloaded locally)
 .android-sdk
 
+# Gradle user home used for offline builds
+.gradle-home
+
 # APK signing / intermediate
 *.jks
 *.keystore
