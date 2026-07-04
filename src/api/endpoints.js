@@ -92,7 +92,8 @@ export const System = {
   checkParserEngine: (body) => post('/system/parser-engines/check', body),
   reconnectDocreader: (body) => post('/system/docreader/reconnect', body),
   storageEngineStatus: () => get('/system/storage-engine-status'),
-  checkStorageEngine: (body) => post('/system/storage-engine-check', body)
+  checkStorageEngine: (body) => post('/system/storage-engine-check', body),
+  setStorageEngine: (body) => post('/system/storage-engine', body)
 };
 
 export const Tenant = {

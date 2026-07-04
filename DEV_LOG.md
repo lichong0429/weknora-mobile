@@ -192,6 +192,34 @@ export PATH="$JAVA_HOME/bin:$PATH"
 
 ## 9. 总结
 
-目前项目已完成移动端 PWA 核心功能、TWA 与 WebView 两种 Android 封装方案，并解决了一系列构建、签名、网络、浏览器兼容性等问题。用户当前应使用 **WebView 版 APK** 连接 Tailscale 内的 HTTP WeKnora 服务。后续待用户部署公网 HTTPS 域名后，可进一步优化为 TWA 方案并替换正式签名密钥。
+目前项目已完成移动端 PWA 核心功能、TWA 与 WebView 两种 Android 封装方案，并解决了一系列构建、签名、网络、浏览器兼容性等问题。用户当前应使用 **WebView 版 APK** 连接 Tailscale 内的 HTTP WeKnora 服务。
 
-项目已暂停，等待用户后续反馈或新的开发需求。
+---
+
+## 10. 后续小修复（2026-07-05）
+
+针对用户反馈的三个问题进行了修复：
+
+### 1. 系统信息 → 存储引擎不能更改
+- 新增「切换 / 配置」按钮，打开存储引擎选择弹窗。
+- 列出所有可用存储引擎，点击「使用」会尝试调用 `POST /system/storage-engine`。
+- 若后端不支持 API 切换，则提示用户通过 WeKnora 服务器环境变量或管理后台修改。
+- 当前生效引擎会高亮显示。
+
+### 2. 解析引擎显示空白
+- 增加响应结构兼容：`data` / `data.items` / `data.list` / `data.engines` / `data.parsers` 都能识别。
+- 增加字段兼容：状态字段支持 `available` / `enabled` / `status` / `active` / `healthy`。
+- 增加「查看原始响应」折叠面板，方便排查后端返回格式。
+- 解析服务连接状态增加绿色/红色样式区分。
+
+### 3. 设置界面「代理服务器」含义不清
+- 标题改为「使用代理服务器：把请求转发到你部署的 WeKnora 后端」。
+- 明确提示当前 App 独立运行，不要勾选。
+- 新增「代理服务器是做什么的？」帮助按钮，点击弹出详细说明：
+  - 解释 CORS 和代理服务器的作用
+  - 列出需要勾选和不需要勾选的常见场景
+  - 提示不勾选时代理服务会导致所有请求失败
+
+### 构建优化
+- WebView 项目的 `app/build.gradle` 增加 `signingConfigs.release`，使 Gradle 可直接产出已签名 APK，无需额外 apksigner 步骤。
+- 重新构建 `weknora-mobile-webview.apk` 并上传到 GitHub Release v1.0.2。
