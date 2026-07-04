@@ -1,0 +1,197 @@
+# WeKnora Mobile 开发日志
+
+> 记录项目从需求提出到当前暂停状态的主要开发过程、技术决策与问题排查。
+>
+> 最后更新：2026-07-05
+
+---
+
+## 1. 项目背景与目标
+
+用户希望为自托管的 **WeKnora** 知识库系统提供一个移动端入口，解决手机浏览器直接访问网页端时布局不便、操作体验差的问题。核心诉求：
+
+1. 手机端布局合理、可安装使用。
+2. 接入自托管 WeKnora 的 REST API，能够浏览知识库、文档、智能体、会话等。
+3. 设置页面功能与网页端保持一致。
+4. 最终输出 Android APK，并托管到 GitHub 方便分发。
+
+---
+
+## 2. 技术选型
+
+| 层级 | 技术 |
+|---|---|
+| 前端框架 | React 18 + Vite 5 |
+| 样式 | Tailwind CSS + Lucide icons |
+| PWA | `vite-plugin-pwa`（生成 manifest 与 Service Worker）|
+| 构建产物托管 | CloudStudio 静态站点部署 |
+| Android 封装 | 方案 A：Bubblewrap（TWA）<br>方案 B：原生 Android WebView（备选） |
+| Android 构建 | Gradle 8.11.1 + Android Gradle Plugin 8.9.1 |
+| 签名 | 项目内自动生成 `android/android.keystore`（密码：`weknora123`） |
+
+---
+
+## 3. 开发里程碑
+
+### 阶段 1：PWA 基础功能开发
+
+- 基于 Vite + React + Tailwind 搭建移动端响应式界面。
+- 接入 WeKnora REST API，实现：
+  - 服务器配置与 API Key 保存
+  - 知识库列表、详情、设置
+  - 文档列表、智能体列表、会话列表
+  - 模型列表、系统信息
+  - 诊断与调试页面（查看请求 URL、原始响应、curl 命令等）
+- 设置中心逐步补齐：模型管理、向量库、网络搜索源、系统信息入口。
+- 完成首次生产构建并部署到 CloudStudio 预览。
+
+### 阶段 2：问题排查与功能补全
+
+- **问题：接口测试全绿但列表为空**
+  - 原因：用户勾选了“使用代理服务器”，但 CloudStudio 静态托管环境未运行 `server-proxy.js`，所有请求实际发到了预览地址，返回 HTML 页面。
+  - 解决：取消勾选；在 `Settings.jsx` 增加黄色警告说明，明确 CloudStudio 预览不要勾选代理。
+- **问题：系统信息页面空白**
+  - 原因：`System` 与浏览器全局对象冲突；`useAsync` 未监听 `config` 变化。
+  - 解决：重命名为 `SystemAPI`；增加依赖项、挂载守卫、加载/错误/空状态。
+- **问题：解析引擎 / 存储引擎显示为空**
+  - 原因：后端字段与前端解析不一致。
+  - 解决：修正字段解析：`/system/parser-engines` 返回 `data` 数组且状态字段为 `available`；`/system/storage-engine-status` 返回 `data.engines`。
+- **问题：知识库设置功能少**
+  - 解决：新增 `KBSettings.jsx`，支持：
+    - 基本信息（名称、描述、ID 只读、类型切换）
+    - 模型配置（Embedding、摘要/Wiki 合成、VLM 启用与模型选择）
+    - 索引策略（RAG 检索、Wiki 知识库、知识图谱开关）
+    - Wiki 提取粒度（聚焦 / 标准 / 详尽）
+  - 模型下拉框从 `/models` 自动加载并过滤，未加载到模型时允许手动输入模型 ID。
+
+### 阶段 3：Android APK 构建与分发
+
+- 使用 **Bubblewrap** 将 PWA 转换为 TWA（Trusted Web Activity）APK。
+- 构建环境准备：
+  - 安装 Android SDK 命令行工具
+  - 接受 SDK 许可证
+  - 安装 `build-tools;35.0.0` 和 `platforms;android-36`
+  - 预下载 Gradle 8.11.1 到项目内 `.gradle-home`（解决网络慢问题）
+  - 将 `android/build.gradle` 仓库替换为阿里云镜像（解决 `maven.google.com` 访问问题）
+  - 修改 Bubblewrap 源码兼容 JDK 18 和路径含空格的情况
+- 生成 `weknora-mobile.apk`（TWA 版，约 921 KB）。
+- 初始化 Git 仓库，因当前环境无法直连 `github.com`，改用 GitHub REST API 推送源码。
+- 创建 GitHub Release `v1.0.0` 并上传 APK。
+
+### 阶段 4：安装问题与备选方案
+
+- **问题：TWA 安装后卡在开屏**
+  - 原因：用户手机默认浏览器不是 Chrome，TWA 依赖 Chrome 的 Custom Tabs 支持。
+  - 解决：
+    1. 部署 `/.well-known/assetlinks.json`（Digital Asset Links）到 CloudStudio，满足 TWA 验证。
+    2. 新增独立 **原生 Android WebView** 项目 `webview-app/`，不依赖任何浏览器，直接加载 PWA。
+    3. 生成 `weknora-mobile-webview.apk`（约 4.6 MB）。
+- **问题：WebView 版输入地址后显示 `failed to fetch`**
+  - 原因：CloudStudio PWA 是 HTTPS，而用户 WeKnora 部署在 Tailscale HTTP 内网地址，触发 **CORS + 混合内容（HTTPS→HTTP）** 拦截。
+  - 解决：将 PWA 整体打包进 APK，从本地 `file://` 加载，绕过 CORS 和混合内容限制。
+  - 新增 WebView 专用构建配置：`vite.config.webview.js`、`src/main-webview.jsx`、`index-webview.html`。
+  - 在 `MainActivity.java` 中启用 `setAllowUniversalAccessFromFileURLs(true)`、`setAllowFileAccessFromFileURLs(true)`、`setMixedContentMode(MIXED_CONTENT_ALWAYS_ALLOW)`。
+  - 重新生成 WebView APK 并更新到 GitHub Release `v1.0.1`。
+
+---
+
+## 4. 关键问题与解决方案
+
+| 问题 | 根因 | 解决方案 |
+|---|---|---|
+| 接口测试全绿但数据为空 | 代理服务器模式在 CloudStudio 未运行 | 取消勾选；增加界面警告 |
+| 系统信息空白 | `System` 全局对象冲突 | 重命名为 `SystemAPI` |
+| 解析/存储引擎为空 | 字段解析错误 | 修正后端字段映射 |
+| Bubblewrap 初始化卡 JDK 安装 | JDK 18 不被默认接受 | 修改 `JdkHelper.js` 接受 JDK 17/18 |
+| `keytool` 找不到 | Windows 子进程需要 `PATH` 环境变量 | `getEnv()` 同时设置 `Path` 和 `PATH` |
+| Gradle 下载极慢 | 国外 CDN 网络问题 | 项目内 `.gradle-home` 预下载 Gradle |
+| Maven 仓库访问失败 | `maven.google.com` 被墙 | 改为阿里云镜像 |
+| 缺少 build-tools | Bubblewrap 需要 35.0.0 | `sdkmanager` 安装 |
+| 缺少 platform android-36 | Gradle 依赖新版本平台 | `sdkmanager` 安装 |
+| JDK 路径含空格导致签名失败 | 命令参数未加引号 | `JdkHelper.runJava` 加引号 |
+| TWA 卡开屏 | 默认浏览器不是 Chrome | 部署 `assetlinks.json` + 新增 WebView 方案 |
+| HTTPS PWA 访问 HTTP 内网 API | 混合内容 / CORS 拦截 | PWA 嵌入 APK 从本地 `file://` 加载 |
+
+---
+
+## 5. 当前产物
+
+| 产物 | 路径 | 说明 |
+|---|---|---|
+| TWA APK | `weknora-mobile.apk` | 适合 Chrome 默认浏览器、公网 HTTPS 环境 |
+| WebView APK | `weknora-mobile-webview.apk` | 适合 Tailscale/内网/HTTP 环境，无浏览器依赖 |
+| GitHub 仓库 | https://github.com/lichong0429/weknora-mobile | 源码与 Release 分发 |
+| GitHub Release | https://github.com/lichong0429/weknora-mobile/releases/tag/v1.0.1 | 包含两个 APK |
+| 直接下载页 | https://1087d592a16a4fb5b7fdf5d78fa0995f.app.codebuddy.work | 国内网络备用下载 |
+
+---
+
+## 6. 已知限制与注意事项
+
+1. **签名密钥**：当前使用自动生成的 `android/android.keystore`（密码 `weknora123`），正式发布前必须替换为正式签名密钥，否则应用商店无法上架且更新会冲突。
+2. **TWA 版本**：依赖 Chrome 默认浏览器和域名的 Digital Asset Links 验证；在 Tailscale/HTTP 环境下不推荐使用。
+3. **WebView 版本**：虽然兼容性好，但体积更大（4.6 MB vs 0.9 MB），且 PWA 更新需要重新构建 APK。
+4. **CORS**：如果用户后续将 WeKnora 部署为 HTTPS 公网域名，且希望使用在线 PWA 而非嵌入 APK，仍需在 WeKnora 后端配置正确的 CORS 源。
+5. **GitHub Token**：用于推送的 Token 应及时在 GitHub 设置中撤销。
+
+---
+
+## 7. 待办事项（后续开发方向）
+
+- [ ] 测试 WebView 版在 Tailscale 内网环境下的实际登录与数据加载。
+- [ ] 根据用户后续提供的公网域名，重新构建指向该域名的 TWA 版本，并配置正式的 Digital Asset Links。
+- [ ] 替换为正式 Android 签名密钥。
+- [ ] 完善设置中心：租户切换、用户管理、更详细的系统配置。
+- [ ] 增加知识库文档上传、智能体会话流式输出等高级功能。
+- [ ] 收集用户反馈，优化移动端交互细节。
+- [ ] 考虑 iOS 支持（Safari PWA 安装或 Capacitor 方案）。
+
+---
+
+## 8. 构建命令速查
+
+### 构建 TWA 版
+
+```bash
+cd weknora-mobile/android
+export GRADLE_USER_HOME="../.gradle-home"
+export JAVA_HOME="D:/Program Files/Java/jdk-18.0.2.1"
+export PATH="$JAVA_HOME/bin:$PATH"
+node ../node_modules/@bubblewrap/cli/bin/bubblewrap.js build \
+  --config=C:/Users/24221/.bubblewrap/config.json
+```
+
+### 构建 WebView 版
+
+```bash
+cd weknora-mobile
+npm run build -- --config vite.config.webview.js
+
+rm -rf webview-app/app/src/main/assets
+mkdir -p webview-app/app/src/main/assets/web
+cp -r dist-webview/* webview-app/app/src/main/assets/web/
+mv webview-app/app/src/main/assets/web/index-webview.html \
+   webview-app/app/src/main/assets/web/index.html
+
+cd webview-app
+export ANDROID_HOME="../.android-sdk"
+export GRADLE_USER_HOME="../.gradle-home"
+export JAVA_HOME="D:/Program Files/Java/jdk-18.0.2.1"
+export PATH="$JAVA_HOME/bin:$PATH"
+./gradlew assembleRelease
+
+../.android-sdk/build-tools/35.0.0/apksigner sign \
+  --ks ../android/android.keystore \
+  --ks-pass pass:weknora123 \
+  --key-pass pass:weknora123 \
+  --out app/build/outputs/apk/release/app-release.apk \
+  app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+---
+
+## 9. 总结
+
+目前项目已完成移动端 PWA 核心功能、TWA 与 WebView 两种 Android 封装方案，并解决了一系列构建、签名、网络、浏览器兼容性等问题。用户当前应使用 **WebView 版 APK** 连接 Tailscale 内的 HTTP WeKnora 服务。后续待用户部署公网 HTTPS 域名后，可进一步优化为 TWA 方案并替换正式签名密钥。
+
+项目已暂停，等待用户后续反馈或新的开发需求。
