@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "work.codebuddy.app.cb058c0dd2a44848872eb311faca6577.twa",
+      "sha256_cert_fingerprints": [
+        "9F34198B92B9071FB7C458F7B4F78F9D60A3F367611A547260CB5A3BD3169867"
+      ]
+    }
+  }
+]

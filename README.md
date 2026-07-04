@@ -9,7 +9,16 @@
 - 文档、智能体、会话、模型、系统信息浏览
 - 诊断与调试页面，方便排查接口问题
 - 响应式移动端布局
-- 可封装为 Android APK（TWA）
+- 可封装为 Android APK（TWA 或 WebView 两种方案）
+
+## 两个 APK 的区别
+
+| APK | 技术方案 | 适用场景 | 依赖 |
+|---|---|---|---|
+| `weknora-mobile.apk` | TWA（Trusted Web Activity） | Chrome 是默认浏览器、且部署域名的 Digital Asset Links 已配置 | Chrome / 支持 TWA 的浏览器 |
+| `weknora-mobile-webview.apk` | 原生 WebView | 默认浏览器不是 Chrome、内网/Tailscale 环境、希望最大限度兼容 | 无浏览器依赖 |
+
+如果 TWA 版本安装后一直卡在开屏，请使用 WebView 版本。
 
 ## 技术栈
 
@@ -17,6 +26,7 @@
 - Tailwind CSS + Lucide icons
 - vite-plugin-pwa（生成 PWA manifest 与 Service Worker）
 - Bubblewrap（PWA → TWA → APK）
+- 原生 Android WebView（备选方案）
 
 ## 本地开发
 
@@ -42,6 +52,30 @@ node ../node_modules/@bubblewrap/cli/bin/bubblewrap.js build \
 ```
 
 APK 产物位于 `android/app-release-signed.apk`。
+
+### WebView 备选 APK
+
+如果 TWA 在你的手机上无法启动（如默认浏览器不是 Chrome），可使用 WebView 版本：
+
+```bash
+cd webview-app
+export ANDROID_HOME="../.android-sdk"
+export GRADLE_USER_HOME="../.gradle-home"
+./gradlew assembleRelease
+```
+
+签名：
+
+```bash
+../.android-sdk/build-tools/35.0.0/apksigner sign \
+  --ks ../android/android.keystore \
+  --ks-pass pass:weknora123 \
+  --key-pass pass:weknora123 \
+  --out app/build/outputs/apk/release/app-release-v2.apk \
+  app/build/outputs/apk/release/app-release-unsigned.apk
+```
+
+产物为 `webview-app/app/build/outputs/apk/release/app-release-v2.apk`。
 
 ## 签名密钥
 

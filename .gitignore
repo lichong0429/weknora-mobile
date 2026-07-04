@@ -30,6 +30,13 @@ dist-ssr
 /android/.gradle
 /android/local.properties
 /android/*.apk
+/android/*.aab
+/android/*.idsig
+
+# WebView app build outputs
+/webview-app/app/build
+/webview-app/.gradle
+/webview-app/local.properties
 
 # Editor / OS
 .vscode/*
