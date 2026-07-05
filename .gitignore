@@ -14,11 +14,25 @@ node_modules
 
 # Build outputs
 dist
+dist-webview
 dist-ssr
 *.local
 
+# Download page deployment directory
+dist-download
+
+# Root APK deliverables (these go to GitHub Releases, not source repo)
+/weknora-mobile.apk
+/weknora-mobile-webview.apk
+
+# Embedded PWA assets (generated from dist-webview)
+/webview-app/app/src/main/assets
+
 # Android SDK (downloaded locally)
 .android-sdk
+
+# Gradle user home used for offline builds
+.gradle-home
 
 # APK signing / intermediate
 *.jks
@@ -27,6 +41,14 @@ dist-ssr
 /android/.gradle
 /android/local.properties
 /android/*.apk
+/android/*.aab
+/android/*.idsig
+
+# WebView app build outputs
+/webview-app/app/build
+/webview-app/build
+/webview-app/.gradle
+/webview-app/local.properties
 
 # Editor / OS
 .vscode/*

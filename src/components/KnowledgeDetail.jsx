@@ -5,6 +5,7 @@ import { Knowledge } from '../api/endpoints.js';
 import { Loader2, AlertCircle, Trash2, RefreshCw, XCircle, Save, ArrowLeft } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import KnowledgeChunks from './KnowledgeChunks.jsx';
 
 function KnowledgeDetail() {
   const { id } = useParams();
@@ -228,6 +229,13 @@ function KnowledgeDetail() {
               <div className="py-8 text-center text-sm text-gray-400">暂无预览内容</div>
             )}
           </div>
+
+          {knowledge.type !== 'manual' && (
+            <div className="rounded-2xl bg-white p-4 shadow-sm">
+              <h3 className="mb-3 font-semibold text-gray-900">分块</h3>
+              <KnowledgeChunks knowledgeId={id} />
+            </div>
+          )}
         </>
       )}
     </div>

@@ -4,8 +4,9 @@ import { useAsync } from '../hooks/useApi.js';
 import { useConfig } from '../contexts/ConfigContext.jsx';
 import { KB } from '../api/endpoints.js';
 import { extractList } from '../utils/list.js';
-import { Plus, Database, Pin, ChevronRight, Loader2, AlertCircle, X, Wrench, RefreshCw } from 'lucide-react';
+import { Plus, Database, Pin, ChevronRight, Loader2, AlertCircle, X, Wrench, RefreshCw, Copy } from 'lucide-react';
 import { clsx } from 'clsx';
+import KBCopyMoveModal from './KBCopyMoveModal.jsx';
 
 function KBList() {
   const navigate = useNavigate();
@@ -14,6 +15,7 @@ function KBList() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [type, setType] = useState('document');
+  const [activeKb, setActiveKb] = useState(null);
   const { data, loading, error, run, setData } = useAsync(
     () => KB.list(),
     [config.baseUrl, config.apiKey, config.useProxy]
@@ -93,6 +95,13 @@ function KBList() {
               </p>
             </div>
             <div className="flex items-center gap-2">
+              <button
+                onClick={(e) => { e.stopPropagation(); setActiveKb(kb); }}
+                className="rounded-full p-2 text-gray-400 hover:bg-gray-100"
+                aria-label="复制/移动"
+              >
+                <Copy className="h-4 w-4" />
+              </button>
               <button
                 onClick={(e) => togglePin(kb, e)}
                 className={clsx(
@@ -175,6 +184,13 @@ function KBList() {
             </form>
           </div>
         </div>
+      )}
+      {activeKb && (
+        <KBCopyMoveModal
+          kb={activeKb}
+          onClose={() => setActiveKb(null)}
+          onSuccess={() => { setActiveKb(null); run(); }}
+        />
       )}
     </div>
   );

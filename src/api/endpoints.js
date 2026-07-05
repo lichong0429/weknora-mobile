@@ -7,6 +7,10 @@ export const KB = {
   update: (id, body) => put(`/knowledge-bases/${id}`, body),
   remove: (id) => del(`/knowledge-bases/${id}`),
   pin: (id) => put(`/knowledge-bases/${id}/pin`),
+  copy: (id, body = {}) => post(`/knowledge-bases/${id}/copy`, body),
+  move: (id, body) => post(`/knowledge-bases/${id}/move`, body),
+  eval: (id, body = {}) => post(`/knowledge-bases/${id}/evaluate`, body),
+  stats: (id) => get(`/knowledge-bases/${id}/stats`),
   hybridSearch: (id, body) => post(`/knowledge-bases/${id}/hybrid-search`, body)
 };
 
@@ -19,9 +23,11 @@ export const Knowledge = {
   update: (id, body) => put(`/knowledge/${id}`, body),
   updateManual: (id, body) => put(`/knowledge/manual/${id}`, body),
   remove: (id) => del(`/knowledge/${id}`),
+  batchRemove: (kbId, ids) => post('/knowledge/batch-delete', { kbId, ids }),
   reparse: (id) => post(`/knowledge/${id}/reparse`),
   cancelParse: (id) => post(`/knowledge/${id}/cancel-parse`),
   preview: (id) => get(`/knowledge/${id}/preview`),
+  chunks: (id, params = {}) => get(`/knowledge/${id}/chunks`, params),
   search: (params) => get('/knowledge/search', params)
 };
 
@@ -92,7 +98,19 @@ export const System = {
   checkParserEngine: (body) => post('/system/parser-engines/check', body),
   reconnectDocreader: (body) => post('/system/docreader/reconnect', body),
   storageEngineStatus: () => get('/system/storage-engine-status'),
-  checkStorageEngine: (body) => post('/system/storage-engine-check', body)
+  checkStorageEngine: (body) => post('/system/storage-engine-check', body),
+  setStorageEngine: (body) => post('/system/storage-engine', body)
+};
+
+export const Wiki = {
+  listPages: (kbId, params = {}) => get(`/knowledgebase/${kbId}/wiki/pages`, params),
+  listFolders: (kbId, parentId = '', pageTypes = '') =>
+    get(`/knowledgebase/${kbId}/wiki/folders`, { parent_id: parentId, page_types: pageTypes }),
+  getPage: (kbId, slug) => get(`/knowledgebase/${kbId}/wiki/pages/${encodeURIComponent(slug)}`),
+  getIndex: (kbId, params = {}) => get(`/knowledgebase/${kbId}/wiki/index`, params),
+  getGraph: (kbId, params = {}) => get(`/knowledgebase/${kbId}/wiki/graph`, params),
+  getStats: (kbId) => get(`/knowledgebase/${kbId}/wiki/stats`),
+  searchPages: (kbId, q, limit = 20) => get(`/knowledgebase/${kbId}/wiki/search`, { q, limit })
 };
 
 export const Tenant = {
@@ -102,3 +120,20 @@ export const Tenant = {
   getKV: (key) => get(`/tenants/kv/${key}`),
   setKV: (key, body) => put(`/tenants/kv/${key}`, body)
 };
+
+export const Tag = {
+  list: (kbId, params = {}) => get(`/knowledge-bases/${kbId}/tags`, params),
+  create: (kbId, body) => post(`/knowledge-bases/${kbId}/tags`, body),
+  update: (kbId, tagId, body) => put(`/knowledge-bases/${kbId}/tags/${tagId}`, body),
+  remove: (kbId, tagId, params = {}) => del(`/knowledge-bases/${kbId}/tags/${tagId}`, params)
+};
+
+export const FAQ = {
+  listEntries: (kbId, params = {}) => get(`/knowledge-bases/${kbId}/faq/entries`, params),
+  createEntry: (kbId, body) => post(`/knowledge-bases/${kbId}/faq/entry`, body),
+  updateEntry: (kbId, entryId, body) => put(`/knowledge-bases/${kbId}/faq/entries/${entryId}`, body),
+  removeEntries: (kbId, ids) => del(`/knowledge-bases/${kbId}/faq/entries`, { ids }),
+  searchEntries: (kbId, body) => post(`/knowledge-bases/${kbId}/faq/search`, body)
+};
+
+

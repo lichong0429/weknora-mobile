@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { useConfig } from '../contexts/ConfigContext.jsx';
 import { KB, Model } from '../api/endpoints.js';
-import { AlertCircle, CheckCircle, Key, Globe, TestTube, Server, Bug, Cpu, Database, Globe as WebSearchIcon, Activity, ChevronRight } from 'lucide-react';
+import { AlertCircle, CheckCircle, Key, Globe, TestTube, Server, Bug, Cpu, Database, Globe as WebSearchIcon, Activity, ChevronRight, HelpCircle } from 'lucide-react';
 
 function Settings() {
   const navigate = useNavigate();
@@ -13,6 +13,7 @@ function Settings() {
   const [useProxy, setUseProxy] = useState(config.useProxy || false);
   const [testStatus, setTestStatus] = useState(null);
   const [testing, setTesting] = useState(false);
+  const [proxyHelpOpen, setProxyHelpOpen] = useState(false);
 
   const handleSave = () => {
     setConfig({ baseUrl, apiKey, useProxy });
@@ -83,7 +84,7 @@ function Settings() {
               <Server className={clsx('h-4 w-4', useProxy ? 'text-amber-600' : 'text-gray-600')} />
               <div>
                 <p className={clsx('text-sm font-medium', useProxy ? 'text-amber-900' : 'text-gray-700')}>使用代理服务器</p>
-                <p className="text-xs text-gray-500">通过同域后端转发，绕过 CORS</p>
+                <p className="text-xs text-gray-500">把请求转发到你部署的 WeKnora 后端</p>
               </div>
             </div>
             <input
@@ -94,9 +95,18 @@ function Settings() {
             />
           </div>
           <p className="mt-2 text-xs leading-relaxed text-amber-700">
-            仅在自有服务器部署时使用。需要额外运行 <code className="rounded bg-white px-1 py-0.5 font-mono text-[10px]">server-proxy.js</code>。
-            当前 CloudStudio 在线预览属于静态托管，勾选此选项会导致请求发到错误地址，请不要勾选。
+            这个选项只在一种情况下才需要打开：你把这个 App 的网页文件和 WeKnora 放在同一台服务器、同一个域名下，并且启动了 <code className="rounded bg-white px-1 py-0.5 font-mono text-[10px]">server-proxy.js</code> 转发请求。
           </p>
+          <p className="mt-2 text-xs font-medium text-red-600">
+            当前这个 App 是独立运行的，没有代理服务器，请不要勾选此选项。
+          </p>
+          <button
+            type="button"
+            onClick={() => setProxyHelpOpen(true)}
+            className="mt-2 flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700"
+          >
+            <HelpCircle className="h-3 w-3" /> 代理服务器是做什么的？
+          </button>
         </div>
 
         {testStatus && (
@@ -152,6 +162,48 @@ function Settings() {
           WeKnora Mobile 是基于 WeKnora REST API 构建的移动端客户端，针对手机屏幕优化布局，支持知识库浏览、搜索、智能问答和会话管理。
         </p>
       </div>
+
+      {proxyHelpOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
+            <div className="mb-4 flex items-center gap-2">
+              <Server className="h-5 w-5 text-blue-600" />
+              <h3 className="text-lg font-bold text-gray-900">什么是“使用代理服务器”？</h3>
+            </div>
+            <div className="space-y-3 text-sm text-gray-600 leading-relaxed">
+              <p>
+                手机 App 里的网页需要访问你的 WeKnora 服务器。浏览器有一种安全限制叫 <strong>CORS</strong>，当网页地址和 WeKnora 地址不在同一个域名时，浏览器可能会拦截请求。
+              </p>
+              <p>
+                “使用代理服务器”就是用来解决这个问题的：让网页先把请求发到自己所在的服务器，再由服务器转发给 WeKnora，这样浏览器看来就像是同一个域名在请求。
+              </p>
+              <p className="font-medium text-gray-900">什么时候需要勾选？</p>
+              <ul className="list-disc space-y-1 pl-5 text-gray-600">
+                <li>你把 App 的网页文件和 WeKnora 部署在同一台服务器上</li>
+                <li>你启动了项目里的 <code className="rounded bg-gray-100 px-1 font-mono text-xs">server-proxy.js</code> 作为转发服务</li>
+              </ul>
+              <p className="font-medium text-gray-900">什么时候不需要勾选？</p>
+              <ul className="list-disc space-y-1 pl-5 text-gray-600">
+                <li>你现在用的这个 WebView 版 App（PWA 已经打包在 APK 里）</li>
+                <li>你从 CloudStudio 或其他静态托管地址直接打开网页</li>
+                <li>你还没部署 server-proxy.js</li>
+              </ul>
+              <p className="text-amber-700">
+                如果你不确定，请保持不勾选。勾选后但没有运行代理服务，会导致所有请求都失败。
+              </p>
+            </div>
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setProxyHelpOpen(false)}
+                className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                明白了
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
