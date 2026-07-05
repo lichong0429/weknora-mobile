@@ -190,36 +190,35 @@ export PATH="$JAVA_HOME/bin:$PATH"
 
 ---
 
-## 9. 总结
+## 11. 知识库翻页与视图功能扩展（2026-07-05）
 
-目前项目已完成移动端 PWA 核心功能、TWA 与 WebView 两种 Android 封装方案，并解决了一系列构建、签名、网络、浏览器兼容性等问题。用户当前应使用 **WebView 版 APK** 连接 Tailscale 内的 HTTP WeKnora 服务。
+### 修复：知识库详情页不能持续下滑翻页
+- 将文档列表从「点击加载更多」改为 **无限滚动（IntersectionObserver）** + **数据累积**。
+- 支持来源、解析状态、标签、时间范围筛选。
+- 增加刷新按钮、加载状态、已加载/总数提示。
 
----
+### 新增：Wiki 视图与关系图谱视图
+- 在知识库详情页顶部增加「文档 / Wiki / 图谱 / 搜索 / 设置」标签切换。
+- **Wiki 视图**：调用 WeKnora `/knowledgebase/{id}/wiki/*` 接口，展示 Wiki 页面统计、搜索、树形/列表浏览、页面内容阅读（Markdown 渲染）。
+- **图谱视图**：调用 `/knowledgebase/{id}/wiki/graph`，展示节点列表、简单 SVG 关系图、节点详情与关联。
+- 仅当知识库启用 `wiki_enabled` / `graph_enabled` 索引时显示对应标签。
 
-## 10. 后续小修复（2026-07-05）
+### 新增：FAQ 类型知识库支持
+- 当知识库 `type === 'faq'` 时，文档标签自动切换为「FAQ」。
+- 新增 `FAQView` 组件：FAQ 条目搜索、新增、编辑、删除、启用/推荐状态。
 
-针对用户反馈的三个问题进行了修复：
+### 新增：标签管理
+- 在知识库「设置」页增加 `TagManager` 组件。
+- 支持标签列表、新建、编辑名称/颜色、删除。
 
-### 1. 系统信息 → 存储引擎不能更改
-- 新增「切换 / 配置」按钮，打开存储引擎选择弹窗。
-- 列出所有可用存储引擎，点击「使用」会尝试调用 `POST /system/storage-engine`。
-- 若后端不支持 API 切换，则提示用户通过 WeKnora 服务器环境变量或管理后台修改。
-- 当前生效引擎会高亮显示。
+### 新增：添加知识方式
+- 新增 `CreateKnowledgeModal` 组件，支持「网页链接」和「手动创建」两种知识来源。
+- 知识库文档页保留上传按钮，并新增「添加」按钮打开创建弹窗。
 
-### 2. 解析引擎显示空白
-- 增加响应结构兼容：`data` / `data.items` / `data.list` / `data.engines` / `data.parsers` 都能识别。
-- 增加字段兼容：状态字段支持 `available` / `enabled` / `status` / `active` / `healthy`。
-- 增加「查看原始响应」折叠面板，方便排查后端返回格式。
-- 解析服务连接状态增加绿色/红色样式区分。
+### 其他改进
+- 批量操作：支持文档多选批量删除（优先调用 `/knowledge/batch-delete`，失败回退逐个删除）。
+- 调整主标签在 FAQ 类型下的显示文案与图标。
 
-### 3. 设置界面「代理服务器」含义不清
-- 标题改为「使用代理服务器：把请求转发到你部署的 WeKnora 后端」。
-- 明确提示当前 App 独立运行，不要勾选。
-- 新增「代理服务器是做什么的？」帮助按钮，点击弹出详细说明：
-  - 解释 CORS 和代理服务器的作用
-  - 列出需要勾选和不需要勾选的常见场景
-  - 提示不勾选时代理服务会导致所有请求失败
-
-### 构建优化
-- WebView 项目的 `app/build.gradle` 增加 `signingConfigs.release`，使 Gradle 可直接产出已签名 APK，无需额外 apksigner 步骤。
-- 重新构建 `weknora-mobile-webview.apk` 并上传到 GitHub Release v1.0.2。
+### 产物
+- 重新构建 `weknora-mobile-webview.apk`（4.7 MB），已签名。
+- 更新 GitHub Release v1.0.3。
