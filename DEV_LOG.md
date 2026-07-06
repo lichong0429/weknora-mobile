@@ -350,3 +350,32 @@ export PATH="$JAVA_HOME/bin:$PATH"
 ### 产物
 - 重新构建 `weknora-mobile-webview.apk`（4.7 MB），版本号 1.0.10，已签名。
 - 通过 GitHub Contents API 推送源码、创建 Release v1.0.10 并上传 APK。
+
+---
+
+## 19. v1.0.11：修复 Wiki 渲染 / 滚动 / 链接数 / 链接跳转
+
+### 问题（用户实测 v1.0.10 反馈）
+1. Wiki 详情页 Markdown 渲染很差，无法正常显示排版好的页面。
+2. Wiki 详情页不能下滑，滑一点就卡死。
+3. Wiki 顶部「链接」统计数量始终为 0。
+4. Wiki 正文里的链接点击后无法在应用内跳转。
+
+### 根因
+- `tailwind.config.js` 的 `plugins: []` 未安装 `@tailwindcss/typography`，`prose` 类是空操作，MD 没有任何排版样式；且 wiki 内容为 HTML 时 `react-markdown`（未装 `rehype-raw`）会把标签当纯文本转义。
+- 详情页直接嵌在 Layout 的 `h-full` 滚动链里，长内容撑破后主滚动容器算不到高度 → 滑一点卡死。
+- `getStats` 大概率失败（接口路径/字段名对不上），且没有任何兜底数据源计算链接数。
+- MD 渲染出的 `<a>` 未做点击拦截，WebView 内点击不会在应用内跳转。
+
+### 解决
+- 新增 `src/index.css` 的 `.md-body` 排版样式（标题/段落/列表/代码/引用/表格/图片等），替代缺失的 typography 插件。
+- 重写 `src/components/WikiView.jsx`：
+  - 新增 `isHtmlContent` + `cleanHtml`（复用 KnowledgeDetail 的逻辑），HTML 内容用 `dangerouslySetInnerHTML` 渲染，MD 用 `ReactMarkdown` + `.md-body`。
+  - 详情页改为 `fixed inset-0` 独立可滚动浮层（`flex-1 overflow-y-auto`），与 Layout 滚动链解耦，解决卡死。
+  - 正文容器 `onClick` 事件委托拦截 `<a>` 点击：内部 wiki 链接按 slug/id/title 匹配已加载页面并 `handleOpenPage` 跳转，外部链接尽力 `window.open`。
+  - 「链接」数量改为多源兜底：`stats.total_links`（多字段名）→ 知识图谱 `getGraph` 边数 → 各页面 `links` 字段求和，任一非零即用。
+- `webview-app/app/build.gradle` 版本号升到 `versionCode 11 / versionName "1.0.11"`。
+
+### 产物
+- 重新构建 `weknora-mobile-webview.apk`（版本 1.0.11），已签名。
+- 通过 GitHub Contents API 推送源码、创建 Release v1.0.11 并上传 APK。
