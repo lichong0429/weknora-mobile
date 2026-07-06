@@ -46,7 +46,7 @@ function KBDetail() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('docs');
 
-  const { data: kbRes, loading: kbLoading, error: kbError, run: refreshKb } = useAsync(() => KB.detail(id), [id]);
+  const { data: kbRes, loading: kbLoading, error: kbError, run: refreshKb, setData: setKbRes } = useAsync(() => KB.detail(id), [id]);
   const kb = kbRes?.data;
 
   // Documents: infinite scroll with accumulation
@@ -513,7 +513,10 @@ function KBDetail() {
 
           {activeTab === 'settings' && (
             <div className="space-y-4">
-              <KBSettings kb={kb} onUpdated={refreshKb} />
+              <KBSettings kb={kb} onUpdated={(updatedKb) => {
+                if (updatedKb) setKbRes({ data: updatedKb });
+                refreshKb();
+              }} />
               {!isFaq && <TagManager kbId={id} />}
               <button
                 type="button"
