@@ -223,22 +223,24 @@ export PATH="$JAVA_HOME/bin:$PATH"
 - 重新构建 `weknora-mobile-webview.apk`（4.7 MB），已签名。
 - 更新 GitHub Release v1.0.3。
 
-## 12. 后续功能扩展（v1.0.4）
+## 13. 问题修复（v1.0.5）
 
-### 新增：知识库复制 / 移动
-- 在知识库列表增加复制/移动入口。
-- 调用 `POST /knowledge-bases/{id}/copy` 创建副本，可指定新名称。
-- 调用 `POST /knowledge-bases/{id}/move` 迁移到目标智能体/租户。
+### 修复：Wiki 页面无法查看
+- 原因：Wiki API 路径使用了 `/knowledgebase/{id}/wiki/*`，与后端实际路径 `/knowledge-bases/{id}/wiki/*` 不一致。
+- 解决：统一将 `Wiki` 相关接口路径改为 `/knowledge-bases/{id}/wiki/*`。
 
-### 新增：文档分块管理
-- 新增 `KnowledgeChunks` 组件，调用 `GET /knowledge/{id}/chunks`。
-- 在文档详情页底部展示分块列表，支持展开查看内容与元数据。
+### 修复：文档预览显示「后端返回了非 JSON 内容」
+- 原因：`/knowledge/{id}/preview` 返回的是文本/HTML 内容，而前端按 JSON 解析。
+- 解决：在 `client.js` 新增 `getText` 方法，使用 `Accept: text/plain` 读取原始文本；`Knowledge.preview` 改用 `getText`。
 
-### 新增：知识库统计与检索评估
-- 新增 `KBEval` 组件与「评估」标签页。
-- 展示知识库统计（文档数、分块数、Token 数、解析状态分布）。
-- 支持输入测试问题，调用 `POST /knowledge-bases/{id}/evaluate` 进行检索质量评估。
+### 修复：分块显示 404
+- 原因：分块路径 `/knowledge/{id}/chunks` 可能不存在，部分部署使用 `/knowledge-bases/{kbId}/knowledge/{id}/chunks`。
+- 解决：`Knowledge.chunks` 增加可选 `kbId` 参数；组件从知识详情中读取 `knowledge_base_id` 传入。
+
+### 修复：评估页面 404
+- 原因：`/knowledge-bases/{id}/evaluate` 接口在目标后端不存在。
+- 解决：去掉 `KB.stats` 与 `KB.eval` 的独立调用，改为展示知识库已有统计字段，并使用 `KB.hybridSearch` 作为检索质量测试入口。
 
 ### 产物
-- 重新构建 `weknora-mobile-webview.apk`（4.7 MB），版本号 1.0.4，已签名。
-- 更新 GitHub Release v1.0.4。
+- 重新构建 `weknora-mobile-webview.apk`（4.7 MB），版本号 1.0.5，已签名。
+- 通过 GitHub REST API 推送源码、创建 Release v1.0.5 并上传 APK。
