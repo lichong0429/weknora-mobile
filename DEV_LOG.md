@@ -327,3 +327,26 @@ export PATH="$JAVA_HOME/bin:$PATH"
 ### 产物
 - 重新构建 `weknora-mobile-webview.apk`（4.7 MB），版本号 1.0.9，已签名。
 - 通过 GitHub Contents API 推送源码、创建 Release v1.0.9 并上传 APK。
+
+---
+
+## 18. v1.0.10：修复知识库设置保存后不生效
+
+### 问题
+- 用户反馈新建知识库后，在设置中勾选模型配置（Embedding / 摘要模型）和索引配置（RAG 检索 / Wiki / 知识图谱），点击保存后再次查看，勾选状态没有保留。
+
+### 根因排查
+- `KBSettings.jsx` 保存成功后只调用 `onUpdated()` 让父组件重新拉取详情，但没有使用 `KB.update` 返回的响应数据。
+- 新建知识库时后端返回的 `indexing_strategy` / `vlm_config` / `wiki_config` 等字段可能为空或缺失，保存后父组件重新拉取详情会触发 `useEffect` 重置状态，把界面恢复成默认值。
+
+### 解决
+- 修改 `src/components/KBSettings.jsx`：
+  - 保存成功后读取 `KB.update` 响应中的 `data`，若后端返回了更新后的知识库则直接使用。
+  - 若后端未返回数据，则使用本地乐观更新 `{ ...kb, ...body }`。
+  - 新增 `justSavedRef`：保存成功后的第一次 `kb` 变化跳过重置，避免后端返回旧数据覆盖本地已保存的界面状态。
+- 修改 `src/components/KBDetail.jsx`：
+  - `KBSettings` 的 `onUpdated` 改为接收 `updatedKb`，保存成功后立即用响应数据更新父组件中的知识库对象，再异步刷新详情。
+
+### 产物
+- 重新构建 `weknora-mobile-webview.apk`（4.7 MB），版本号 1.0.10，已签名。
+- 通过 GitHub Contents API 推送源码、创建 Release v1.0.10 并上传 APK。
