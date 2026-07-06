@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
 import { Wiki } from '../api/endpoints.js';
+import { get } from '../api/client.js';
 import {
   BookOpen, Search, Loader2, AlertCircle, FileText, Folder, ChevronRight,
-  BarChart3, LayoutGrid, List, ArrowLeft
+  BarChart3, LayoutGrid, List, ArrowLeft, Bug
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import ReactMarkdown from 'react-markdown';
@@ -32,39 +33,99 @@ function WikiView({ kbId }) {
   const [pageParams, setPageParams] = useState({ page: 1, page_size: 20 });
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [listLoading, setListLoading] = useState(false);
+  const [listError, setListError] = useState(null);
+  const [loadErrors, setLoadErrors] = useState([]);
+  const [showDebug, setShowDebug] = useState(false);
   const observerRef = useRef();
 
-  const { data: statsRes, loading: statsLoading, error: statsError } = useAsync(
-    () => Wiki.getStats(kbId),
+  const { data: statsRes, loading: statsLoading } = useAsync(
+    () => Wiki.getStats(kbId).catch(() => null),
     [kbId]
   );
-  const stats = statsRes?.data;
+  const stats = statsRes?.data || statsRes;
 
   const { data: searchRes, loading: searchLoading } = useAsync(
-    () => (debouncedQuery ? Wiki.searchPages(kbId, debouncedQuery, 30) : Promise.resolve(null)),
+    () => (debouncedQuery ? Wiki.searchPages(kbId, debouncedQuery, 30).catch(() => null) : Promise.resolve(null)),
     [kbId, debouncedQuery]
   );
   const searchResults = debouncedQuery ? extractList(searchRes) : null;
-
-  const { data: listRes, loading: listLoading, error: listError, run: loadList } = useAsync(
-    () => Wiki.listPages(kbId, pageParams),
-    [kbId, pageParams.page, pageParams.page_size]
-  );
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedQuery(query), 400);
     return () => clearTimeout(timer);
   }, [query]);
 
-  useEffect(() => {
-    if (listRes?.data) {
-      const items = Array.isArray(listRes.data) ? listRes.data : listRes.data?.pages || [];
-      const total = listRes.total || listRes.data?.total || 0;
-      setPages((prev) => (pageParams.page === 1 ? items : [...prev, ...items]));
-      setHasMore(items.length > 0 && pages.length + items.length < total);
-      setLoadingMore(false);
+  const loadPages = useCallback(async () => {
+    setListLoading(true);
+    setListError(null);
+    setLoadErrors([]);
+
+    const attempts = [];
+
+    // Try 1: listPages
+    try {
+      const res = await Wiki.listPages(kbId, pageParams);
+      attempts.push({ source: 'Wiki.listPages', ok: true, status: 'success' });
+      handleListResponse(res);
+      setListLoading(false);
+      return;
+    } catch (err) {
+      attempts.push({ source: 'Wiki.listPages', ok: false, error: err.message });
     }
-  }, [listRes]);
+
+    // Try 2: getIndex
+    try {
+      const res = await Wiki.getIndex(kbId, pageParams);
+      attempts.push({ source: 'Wiki.getIndex', ok: true, status: 'success' });
+      handleListResponse(res);
+      setListLoading(false);
+      return;
+    } catch (err) {
+      attempts.push({ source: 'Wiki.getIndex', ok: false, error: err.message });
+    }
+
+    // Try 3: plain wiki root
+    try {
+      const res = await get(`/knowledge-bases/${kbId}/wiki`, pageParams);
+      attempts.push({ source: 'GET /knowledge-bases/{id}/wiki', ok: true, status: 'success' });
+      handleListResponse(res);
+      setListLoading(false);
+      return;
+    } catch (err) {
+      attempts.push({ source: 'GET /knowledge-bases/{id}/wiki', ok: false, error: err.message });
+    }
+
+    // Try 4: old /api/knowledgebase path (legacy)
+    try {
+      const res = await get(`/knowledgebase/${kbId}/wiki/pages`, pageParams);
+      attempts.push({ source: 'GET /knowledgebase/{id}/wiki/pages (legacy)', ok: true, status: 'success' });
+      handleListResponse(res);
+      setListLoading(false);
+      return;
+    } catch (err) {
+      attempts.push({ source: 'GET /knowledgebase/{id}/wiki/pages (legacy)', ok: false, error: err.message });
+    }
+
+    setLoadErrors(attempts);
+    setListError('所有 Wiki 页面接口均无法获取数据，请确认该知识库已启用 Wiki 并检查后端版本。');
+    setPages((prev) => (pageParams.page === 1 ? [] : prev));
+    setHasMore(false);
+    setLoadingMore(false);
+    setListLoading(false);
+  }, [kbId, pageParams]);
+
+  const handleListResponse = useCallback((res) => {
+    const items = extractList(res);
+    const total = res?.total || res?.data?.total || res?.pagination?.total || items.length;
+    setPages((prev) => (pageParams.page === 1 ? items : [...prev, ...items]));
+    setHasMore(items.length > 0 && pages.length + items.length < total);
+    setLoadingMore(false);
+  }, [pageParams.page, pages.length]);
+
+  useEffect(() => {
+    loadPages();
+  }, [loadPages]);
 
   const loadMore = useCallback(() => {
     if (loadingMore || !hasMore || debouncedQuery) return;
@@ -87,8 +148,11 @@ function WikiView({ kbId }) {
     setPageError(null);
     setPageDetail(null);
     try {
-      const res = await Wiki.getPage(kbId, page.slug);
-      setPageDetail(res.data || res);
+      const res = await Wiki.getPage(kbId, page.slug).catch(async () => {
+        // fallback to slug as id
+        return get(`/knowledge-bases/${kbId}/wiki/pages/${encodeURIComponent(page.id || page.slug)}`);
+      });
+      setPageDetail(res?.data || res);
     } catch (err) {
       setPageError(err.message || '加载页面失败');
     } finally {
@@ -111,7 +175,7 @@ function WikiView({ kbId }) {
           <h3 className="mb-2 text-lg font-bold text-gray-900">{selectedPage.title}</h3>
           <div className="mb-3 flex flex-wrap gap-2">
             <span className="rounded-lg bg-blue-50 px-2 py-1 text-xs text-blue-600">
-              {PAGE_TYPE_LABELS[selectedPage.page_type] || selectedPage.page_type}
+              {PAGE_TYPE_LABELS[selectedPage.page_type] || selectedPage.page_type || '页面'}
             </span>
             {selectedPage.version && (
               <span className="rounded-lg bg-gray-100 px-2 py-1 text-xs text-gray-600">
@@ -144,7 +208,7 @@ function WikiView({ kbId }) {
         <div className="rounded-2xl bg-white p-3 shadow-sm text-center">
           <BarChart3 className="mx-auto mb-1 h-5 w-5 text-blue-600" />
           <p className="text-xs text-gray-500">页面</p>
-          <p className="text-lg font-bold text-gray-900">{stats?.total_pages || 0}</p>
+          <p className="text-lg font-bold text-gray-900">{stats?.total_pages ?? pages.length ?? 0}</p>
         </div>
         <div className="rounded-2xl bg-white p-3 shadow-sm text-center">
           <BookOpen className="mx-auto mb-1 h-5 w-5 text-green-600" />
@@ -157,10 +221,6 @@ function WikiView({ kbId }) {
           <p className="text-lg font-bold text-gray-900">{stats?.pending_issues || 0}</p>
         </div>
       </div>
-
-      {statsError && (
-        <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{statsError.message}</div>
-      )}
 
       {/* Search and view mode */}
       <div className="flex gap-2">
@@ -183,6 +243,28 @@ function WikiView({ kbId }) {
         </button>
       </div>
 
+      {/* Debug toggle */}
+      {(loadErrors.length > 0 || listError) && (
+        <button
+          onClick={() => setShowDebug((s) => !s)}
+          className="flex items-center gap-1 text-xs text-gray-500"
+        >
+          <Bug className="h-3 w-3" /> {showDebug ? '隐藏调试信息' : '显示调试信息'}
+        </button>
+      )}
+      {showDebug && loadErrors.length > 0 && (
+        <div className="rounded-xl bg-gray-900 p-3 text-xs text-gray-100">
+          <p className="mb-1 font-semibold">接口尝试记录：</p>
+          <ul className="space-y-1">
+            {loadErrors.map((a, i) => (
+              <li key={i} className={a.ok ? 'text-green-400' : 'text-red-400'}>
+                {a.ok ? '✓' : '✗'} {a.source}: {a.ok ? a.status : a.error}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Search results */}
       {debouncedQuery && (
         <div className="space-y-2">
@@ -195,7 +277,7 @@ function WikiView({ kbId }) {
             <div className="py-4 text-center text-sm text-gray-500">未找到相关页面</div>
           )}
           {searchResults?.map((page) => (
-            <PageCard key={page.slug} page={page} onClick={() => handleOpenPage(page)} />
+            <PageCard key={page.slug || page.id} page={page} onClick={() => handleOpenPage(page)} />
           ))}
         </div>
       )}
@@ -208,7 +290,18 @@ function WikiView({ kbId }) {
             </div>
           )}
           {listError && (
-            <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{listError.message}</div>
+            <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">
+              <p className="font-medium">{listError}</p>
+              <p className="mt-1 text-xs">建议：在网页端打开 Wiki，按 F12 查看 Network 里实际请求的接口路径，然后反馈给我。</p>
+            </div>
+          )}
+
+          {!listLoading && !listError && pages.length === 0 && (
+            <div className="py-8 text-center text-sm text-gray-500">
+              <BookOpen className="mx-auto mb-2 h-8 w-8 text-gray-300" />
+              <p>暂无 Wiki 页面</p>
+              <p className="mt-1 text-xs text-gray-400">如果网页端有内容，请确认知识库已启用 Wiki，或点击上方「显示调试信息」查看接口返回。</p>
+            </div>
           )}
 
           {viewMode === 'tree' ? (
@@ -224,7 +317,7 @@ function WikiView({ kbId }) {
                   <div className="space-y-1">
                     {items.map((page, idx) => (
                       <PageItem
-                        key={page.slug}
+                        key={page.slug || page.id}
                         page={page}
                         onClick={() => handleOpenPage(page)}
                         ref={idx === items.length - 1 ? lastItemRef : null}
@@ -239,7 +332,7 @@ function WikiView({ kbId }) {
               <div className="space-y-1">
                 {pages.map((page, idx) => (
                   <PageItem
-                    key={page.slug}
+                    key={page.slug || page.id}
                     page={page}
                     onClick={() => handleOpenPage(page)}
                     ref={idx === pages.length - 1 ? lastItemRef : null}
@@ -265,9 +358,14 @@ function WikiView({ kbId }) {
 }
 
 function extractList(res) {
+  if (!res) return [];
   if (Array.isArray(res)) return res;
-  if (Array.isArray(res?.data)) return res.data;
-  if (Array.isArray(res?.data?.pages)) return res.data.pages;
+  const data = res.data ?? res;
+  if (Array.isArray(data)) return data;
+  const candidates = [data?.pages, data?.items, data?.results, data?.records, data?.list, data?.data];
+  for (const c of candidates) {
+    if (Array.isArray(c)) return c;
+  }
   return [];
 }
 
@@ -291,7 +389,7 @@ function PageCard({ page, onClick }) {
       </div>
       <div className="min-w-0 flex-1">
         <h4 className="text-sm font-semibold text-gray-900">{page.title}</h4>
-        <p className="text-xs text-gray-500 line-clamp-2">{page.summary || page.slug}</p>
+        <p className="text-xs text-gray-500 line-clamp-2">{page.summary || page.slug || page.id}</p>
       </div>
       <ChevronRight className="h-5 w-5 text-gray-400" />
     </div>
@@ -307,7 +405,7 @@ const PageItem = ({ page, onClick, ref }) => (
     <Folder className="h-4 w-4 shrink-0 text-gray-400" />
     <div className="min-w-0 flex-1">
       <p className="truncate text-sm font-medium text-gray-900">{page.title}</p>
-      <p className="truncate text-xs text-gray-500">{page.summary || page.slug}</p>
+      <p className="truncate text-xs text-gray-500">{page.summary || page.slug || page.id}</p>
     </div>
     <ChevronRight className="h-4 w-4 shrink-0 text-gray-400" />
   </div>
