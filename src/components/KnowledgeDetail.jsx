@@ -233,7 +233,7 @@ function KnowledgeDetail() {
           {knowledge.type !== 'manual' && (
             <div className="rounded-2xl bg-white p-4 shadow-sm">
               <h3 className="mb-3 font-semibold text-gray-900">分块</h3>
-              <KnowledgeChunks knowledgeId={id} />
+              <KnowledgeChunks knowledgeId={id} kbId={knowledge.knowledge_base_id} />
             </div>
           )}
         </>

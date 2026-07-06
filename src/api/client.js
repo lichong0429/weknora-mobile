@@ -82,6 +82,30 @@ export async function get(path, params = {}) {
   }
 }
 
+export async function getText(path, params = {}) {
+  const url = new URL(buildUrl(path), window.location.origin);
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
+  });
+  const headers = { ...getHeaders(false), Accept: 'text/plain,*/*' };
+  const reqEntry = logRequest({ method: 'GET', url: url.toString(), headers, body: params });
+
+  try {
+    const res = await fetch(url.toString(), { headers });
+    const logBody = await res.clone().text().catch(() => '');
+    logResponse({ id: reqEntry.id, status: res.status, statusText: res.statusText, body: logBody });
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { const body = await res.json(); msg = body.error?.message || body.message || msg; } catch {}
+      throw new Error(msg);
+    }
+    return await res.text();
+  } catch (err) {
+    logResponse({ id: reqEntry.id, status: 0, statusText: err.name, error: err.message || String(err) });
+    throw err;
+  }
+}
+
 export async function post(path, body = {}, signal = null) {
   return request('POST', path, body, signal);
 }

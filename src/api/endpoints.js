@@ -1,4 +1,4 @@
-import { del, get, post, put, uploadFile } from './client.js';
+import { del, get, getText, post, put, uploadFile } from './client.js';
 
 export const KB = {
   list: (agentId) => get('/knowledge-bases', agentId ? { agent_id: agentId } : {}),
@@ -26,8 +26,11 @@ export const Knowledge = {
   batchRemove: (kbId, ids) => post('/knowledge/batch-delete', { kbId, ids }),
   reparse: (id) => post(`/knowledge/${id}/reparse`),
   cancelParse: (id) => post(`/knowledge/${id}/cancel-parse`),
-  preview: (id) => get(`/knowledge/${id}/preview`),
-  chunks: (id, params = {}) => get(`/knowledge/${id}/chunks`, params),
+  preview: (id) => getText(`/knowledge/${id}/preview`),
+  chunks: (id, kbId) =>
+    kbId
+      ? get(`/knowledge-bases/${kbId}/knowledge/${id}/chunks`)
+      : get(`/knowledge/${id}/chunks`),
   search: (params) => get('/knowledge/search', params)
 };
 
@@ -103,14 +106,14 @@ export const System = {
 };
 
 export const Wiki = {
-  listPages: (kbId, params = {}) => get(`/knowledgebase/${kbId}/wiki/pages`, params),
+  listPages: (kbId, params = {}) => get(`/knowledge-bases/${kbId}/wiki/pages`, params),
   listFolders: (kbId, parentId = '', pageTypes = '') =>
-    get(`/knowledgebase/${kbId}/wiki/folders`, { parent_id: parentId, page_types: pageTypes }),
-  getPage: (kbId, slug) => get(`/knowledgebase/${kbId}/wiki/pages/${encodeURIComponent(slug)}`),
-  getIndex: (kbId, params = {}) => get(`/knowledgebase/${kbId}/wiki/index`, params),
-  getGraph: (kbId, params = {}) => get(`/knowledgebase/${kbId}/wiki/graph`, params),
-  getStats: (kbId) => get(`/knowledgebase/${kbId}/wiki/stats`),
-  searchPages: (kbId, q, limit = 20) => get(`/knowledgebase/${kbId}/wiki/search`, { q, limit })
+    get(`/knowledge-bases/${kbId}/wiki/folders`, { parent_id: parentId, page_types: pageTypes }),
+  getPage: (kbId, slug) => get(`/knowledge-bases/${kbId}/wiki/pages/${encodeURIComponent(slug)}`),
+  getIndex: (kbId, params = {}) => get(`/knowledge-bases/${kbId}/wiki/index`, params),
+  getGraph: (kbId, params = {}) => get(`/knowledge-bases/${kbId}/wiki/graph`, params),
+  getStats: (kbId) => get(`/knowledge-bases/${kbId}/wiki/stats`),
+  searchPages: (kbId, q, limit = 20) => get(`/knowledge-bases/${kbId}/wiki/search`, { q, limit })
 };
 
 export const Tenant = {

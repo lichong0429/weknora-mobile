@@ -509,7 +509,7 @@ function KBDetail() {
             </div>
           )}
 
-          {activeTab === 'eval' && <KBEval kbId={id} />}
+          {activeTab === 'eval' && <KBEval kbId={id} kb={kb} />}
 
           {activeTab === 'settings' && (
             <div className="space-y-4">
