@@ -294,26 +294,36 @@ export PATH="$JAVA_HOME/bin:$PATH"
 
 ---
 
-## 16. v1.0.8：修复知识库预览与分块加载失败
+## 17. v1.0.9：修复预览无内容/卡顿、Wiki 统计与分页
 
 ### 问题
-- 用户反馈知识库条目点进去后不能预览，分块加载失败。
+- 用户反馈：
+  1. 知识库条目预览仍无内容，分块加载失败。
+  2. 预览加载时软件会卡。
+  3. 知识库条目内容显示为原始文档，未渲染成 Markdown。
+  4. Wiki 界面链接数始终为 0，且多个知识库 Wiki 页面数都显示 20（只加载了第一页）。
 
 ### 根因排查
-- 预览只在 `manual` 类型时自动加载，file/url 类型需要手动点刷新，体验差。
-- `/knowledge/{id}/preview` 返回的可能不是纯文本，而是 JSON 或直接不存在。
-- 分块路径 `/knowledge-bases/{kbId}/knowledge/{id}/chunks` 和 `/knowledge/{id}/chunks` 都可能不存在。
+- 预览只从 `/knowledge/{id}/preview` 读取，但后端返回的可能是空文本，或者实际内容已经在 `knowledge.detail` 的字段里。
+- 渲染大段文本时没有截断，导致 ReactMarkdown 处理长文档时卡顿。
+- 某些原始文档返回的是 HTML 字符串，ReactMarkdown 会将其转义显示为原始标签。
+- Wiki 分页的 `hasMore` 判断依赖后端返回 `total`，未返回时默认认为已结束，导致只显示 20 页。
+- Wiki 链接数只读取 `stats.total_links`，后端未返回该字段时显示 0。
 
 ### 解决
 - 重写 `src/components/KnowledgeDetail.jsx`：
-  - 进入详情页后自动加载预览（不限于 manual 类型）。
-  - 预览依次 fallback：text 接口 → JSON preview 接口 → 详情接口。
-  - 兼容 `preview / content / text / body / markdown / html` 等字段。
-  - 错误时显示调试信息。
-- 重写 `src/components/KnowledgeChunks.jsx`：
-  - 依次尝试 `/knowledge-bases/{kbId}/knowledge/{id}/chunks`、`/knowledge/{id}/chunks`、单数 `/chunk` 等路径。
-  - 错误时显示调试信息。
+  - 优先从 `knowledge` 详情字段（content/text/preview/body/markdown/html/answer/document）提取内容，避免无效请求。
+  - 依次 fallback：文本 preview 接口、JSON preview 接口、知识详情接口。
+  - 增加 8 秒超时，避免请求卡死。
+  - 检测内容是否为 HTML，HTML 用 `dangerouslySetInnerHTML` 直接渲染，否则用 ReactMarkdown 渲染 Markdown/纯文本。
+  - 预览文本超过 6000 字符默认截断，提供「展开全部」按钮，避免长文档渲染卡顿。
+  - 移除「分块」模块，不再显示分块列表。
+- 重写 `src/components/WikiView.jsx`：
+  - 分页逻辑改为：只要返回满 `page_size`（20）条就继续加载下一页，不再依赖 `total` 字段。
+  - 页面数优先从 stats 读取，否则使用已加载页数。
+  - 链接数优先从 stats 读取，若 stats 无该字段则从 pages 的 `link_count / links / links_count` 字段求和。
+  - 问题数同样优先从 stats 读取。
 
 ### 产物
-- 重新构建 `weknora-mobile-webview.apk`（4.7 MB），版本号 1.0.8，已签名。
-- 通过 GitHub Contents API 推送源码、创建 Release v1.0.8 并上传 APK。
+- 重新构建 `weknora-mobile-webview.apk`（4.7 MB），版本号 1.0.9，已签名。
+- 通过 GitHub Contents API 推送源码、创建 Release v1.0.9 并上传 APK。
