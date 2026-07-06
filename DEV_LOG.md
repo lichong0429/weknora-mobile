@@ -291,3 +291,29 @@ export PATH="$JAVA_HOME/bin:$PATH"
 ### 产物
 - 重新构建 `weknora-mobile-webview.apk`（4.7 MB），版本号 1.0.7，已签名。
 - 通过 GitHub Contents API 推送源码、创建 Release v1.0.7 并上传 APK。
+
+---
+
+## 16. v1.0.8：修复知识库预览与分块加载失败
+
+### 问题
+- 用户反馈知识库条目点进去后不能预览，分块加载失败。
+
+### 根因排查
+- 预览只在 `manual` 类型时自动加载，file/url 类型需要手动点刷新，体验差。
+- `/knowledge/{id}/preview` 返回的可能不是纯文本，而是 JSON 或直接不存在。
+- 分块路径 `/knowledge-bases/{kbId}/knowledge/{id}/chunks` 和 `/knowledge/{id}/chunks` 都可能不存在。
+
+### 解决
+- 重写 `src/components/KnowledgeDetail.jsx`：
+  - 进入详情页后自动加载预览（不限于 manual 类型）。
+  - 预览依次 fallback：text 接口 → JSON preview 接口 → 详情接口。
+  - 兼容 `preview / content / text / body / markdown / html` 等字段。
+  - 错误时显示调试信息。
+- 重写 `src/components/KnowledgeChunks.jsx`：
+  - 依次尝试 `/knowledge-bases/{kbId}/knowledge/{id}/chunks`、`/knowledge/{id}/chunks`、单数 `/chunk` 等路径。
+  - 错误时显示调试信息。
+
+### 产物
+- 重新构建 `weknora-mobile-webview.apk`（4.7 MB），版本号 1.0.8，已签名。
+- 通过 GitHub Contents API 推送源码、创建 Release v1.0.8 并上传 APK。
