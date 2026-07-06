@@ -48,6 +48,13 @@ function WikiView({ kbId }) {
   );
   const stats = statsRes?.data || statsRes;
 
+  // 用知识图谱的边数作为「链接」数量的兜底数据源（wiki 页面之间的链接）
+  const { data: graphRes } = useAsync(
+    () => Wiki.getGraph(kbId).catch(() => null),
+    [kbId]
+  );
+  const graph = graphRes?.data || graphRes;
+
   const { data: searchRes, loading: searchLoading } = useAsync(
     () => (debouncedQuery ? Wiki.searchPages(kbId, debouncedQuery, 30).catch(() => null) : Promise.resolve(null)),
     [kbId, debouncedQuery]
@@ -125,7 +132,7 @@ function WikiView({ kbId }) {
     if (node) observerRef.current.observe(node);
   }, [listLoading, loadingMore, loadMore]);
 
-  const handleOpenPage = async (page) => {
+  const handleOpenPage = useCallback(async (page) => {
     setSelectedPage(page);
     setPageLoading(true);
     setPageError(null);
@@ -162,70 +169,124 @@ function WikiView({ kbId }) {
     setPageLoadErrors(attempts);
     setPageError('所有 Wiki 详情接口均无法打开该页面，请确认后端路径。');
     setPageLoading(false);
-  };
+  }, [kbId]);
+
+  // 点击 wiki 内容里的链接（MD 或 HTML 渲染出的 <a>）时在应用内跳转
+  const openWikiLink = useCallback((href) => {
+    if (!href) return;
+    // 外部链接：尽力在新窗口打开
+    if (/^https?:\/\//i.test(href)) {
+      try { window.open(href, '_blank'); } catch {}
+      return;
+    }
+    // 提取 /wiki/ 之后的最后一段作为 slug
+    let seg = href.split('/wiki/').pop();
+    seg = (seg || '').split('?')[0].split('#')[0].replace(/^\/+|\/+$/g, '');
+    const slug = decodeURIComponent(seg);
+    if (!slug) return;
+    const match = pages.find((p) =>
+      p.slug === slug || p.id === slug || p.page_id === slug ||
+      (p.slug && p.slug.toLowerCase() === slug.toLowerCase()) ||
+      (p.title && p.title.toLowerCase() === slug.toLowerCase().replace(/-/g, ' '))
+    );
+    if (match) {
+      handleOpenPage(match);
+    } else {
+      // 兜底：直接尝试用 slug 打开
+      handleOpenPage({ slug, id: slug, title: slug });
+    }
+  }, [pages, handleOpenPage]);
+
+  const handleContentClick = useCallback((e) => {
+    const a = e.target.closest('a');
+    if (!a) return;
+    const href = a.getAttribute('href');
+    if (!href) return;
+    e.preventDefault();
+    openWikiLink(href);
+  }, [openWikiLink]);
 
   const grouped = groupByType(pages);
 
   const pageContent = pageDetail?.content || pageDetail?.body || pageDetail?.markdown || pageDetail?.text || pageDetail?.html || '';
 
-  // 从 stats 或 pages 数据计算统计信息
-  const totalPages = stats && 'total_pages' in stats ? stats.total_pages : pages.length;
-  const totalLinks = stats && 'total_links' in stats
-    ? stats.total_links
-    : pages.reduce((sum, p) => sum + (p.link_count || p.links?.length || p.links_count || 0), 0);
-  const pendingIssues = stats && 'pending_issues' in stats ? stats.pending_issues : 0;
+  // 从 stats / 图谱 / 页面 多源兜底计算「链接」数量
+  const totalLinks = pickLinkCount(stats)
+    ?? graphLinkCount(graph)
+    ?? pagesLinkCount(pages)
+    ?? 0;
+
+  // 页面数：优先 stats，否则已加载页数
+  const totalPages = stats && hasKey(stats, 'total_pages') ? stats.total_pages : pages.length;
+  const pendingIssues = stats && hasKey(stats, 'pending_issues') ? stats.pending_issues : 0;
 
   if (selectedPage) {
+    const isHtml = isHtmlContent(pageContent);
     return (
-      <div className="p-4">
-        <button
-          onClick={() => { setSelectedPage(null); setPageDetail(null); }}
-          className="mb-3 flex items-center gap-1 text-sm text-gray-600"
-        >
-          <ArrowLeft className="h-4 w-4" /> 返回 Wiki
-        </button>
-        <div className="rounded-2xl bg-white p-4 shadow-sm">
-          <h3 className="mb-2 text-lg font-bold text-gray-900">{selectedPage.title}</h3>
-          <div className="mb-3 flex flex-wrap gap-2">
-            <span className="rounded-lg bg-blue-50 px-2 py-1 text-xs text-blue-600">
-              {PAGE_TYPE_LABELS[selectedPage.page_type] || selectedPage.page_type || '页面'}
-            </span>
-            {selectedPage.version && (
-              <span className="rounded-lg bg-gray-100 px-2 py-1 text-xs text-gray-600">
-                v{selectedPage.version}
-              </span>
-            )}
-          </div>
-          {pageLoading ? (
-            <div className="py-8 text-center text-sm text-gray-500">
-              <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> 加载中…
-            </div>
-          ) : pageError ? (
-            <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">
-              <p className="font-medium">{pageError}</p>
-              <button
-                onClick={() => setShowPageDebug((s) => !s)}
-                className="mt-2 flex items-center gap-1 text-xs text-gray-600"
-              >
-                <Bug className="h-3 w-3" /> {showPageDebug ? '隐藏调试' : '显示调试'}
-              </button>
-              {showPageDebug && pageLoadErrors.length > 0 && (
-                <div className="mt-2 rounded-lg bg-gray-900 p-2 text-xs text-gray-100">
-                  {pageLoadErrors.map((a, i) => (
-                    <div key={i} className={a.ok ? 'text-green-400' : 'text-red-400'}>
-                      {a.ok ? '✓' : '✗'} {a.source}: {a.ok ? a.status : a.error}
-                    </div>
-                  ))}
+      <div className="fixed inset-0 z-40 flex flex-col bg-gray-50">
+        <header className="safe-top flex items-center gap-2 bg-white px-4 py-3 shadow-sm">
+          <button
+            onClick={() => { setSelectedPage(null); setPageDetail(null); }}
+            className="flex items-center gap-1 text-sm text-gray-600 active:scale-95"
+          >
+            <ArrowLeft className="h-5 w-5" /> 返回
+          </button>
+          <h2 className="min-w-0 flex-1 truncate text-base font-semibold text-gray-900">
+            {selectedPage.title}
+          </h2>
+        </header>
+        <div className="flex-1 overflow-y-auto no-scrollbar pb-20">
+          <div className="p-4">
+            <div className="rounded-2xl bg-white p-4 shadow-sm">
+              <div className="mb-3 flex flex-wrap gap-2">
+                <span className="rounded-lg bg-blue-50 px-2 py-1 text-xs text-blue-600">
+                  {PAGE_TYPE_LABELS[selectedPage.page_type] || selectedPage.page_type || '页面'}
+                </span>
+                {selectedPage.version && (
+                  <span className="rounded-lg bg-gray-100 px-2 py-1 text-xs text-gray-600">
+                    v{selectedPage.version}
+                  </span>
+                )}
+              </div>
+              {pageLoading ? (
+                <div className="py-8 text-center text-sm text-gray-500">
+                  <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> 加载中…
                 </div>
+              ) : pageError ? (
+                <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">
+                  <p className="font-medium">{pageError}</p>
+                  <button
+                    onClick={() => setShowPageDebug((s) => !s)}
+                    className="mt-2 flex items-center gap-1 text-xs text-gray-600"
+                  >
+                    <Bug className="h-3 w-3" /> {showPageDebug ? '隐藏调试' : '显示调试'}
+                  </button>
+                  {showPageDebug && pageLoadErrors.length > 0 && (
+                    <div className="mt-2 rounded-lg bg-gray-900 p-2 text-xs text-gray-100">
+                      {pageLoadErrors.map((a, i) => (
+                        <div key={i} className={a.ok ? 'text-green-400' : 'text-red-400'}>
+                          {a.ok ? '✓' : '✗'} {a.source}: {a.ok ? a.status : a.error}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : pageContent ? (
+                <div
+                  className="md-body"
+                  onClick={handleContentClick}
+                >
+                  {isHtml ? (
+                    <div dangerouslySetInnerHTML={{ __html: cleanHtml(pageContent) }} />
+                  ) : (
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{pageContent}</ReactMarkdown>
+                  )}
+                </div>
+              ) : (
+                <div className="py-8 text-center text-sm text-gray-400">暂无内容</div>
               )}
             </div>
-          ) : pageContent ? (
-            <div className="prose prose-sm max-w-none text-sm text-gray-700">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{pageContent}</ReactMarkdown>
-            </div>
-          ) : (
-            <div className="py-8 text-center text-sm text-gray-400">暂无内容</div>
-          )}
+          </div>
         </div>
       </div>
     );
@@ -238,17 +299,23 @@ function WikiView({ kbId }) {
         <div className="rounded-2xl bg-white p-3 shadow-sm text-center">
           <BarChart3 className="mx-auto mb-1 h-5 w-5 text-blue-600" />
           <p className="text-xs text-gray-500">页面</p>
-          <p className="text-lg font-bold text-gray-900">{totalPages}</p>
+          <p className="text-lg font-bold text-gray-900">
+            {statsLoading ? <Loader2 className="mx-auto h-4 w-4 animate-spin" /> : totalPages}
+          </p>
         </div>
         <div className="rounded-2xl bg-white p-3 shadow-sm text-center">
           <BookOpen className="mx-auto mb-1 h-5 w-5 text-green-600" />
           <p className="text-xs text-gray-500">链接</p>
-          <p className="text-lg font-bold text-gray-900">{totalLinks}</p>
+          <p className="text-lg font-bold text-gray-900">
+            {statsLoading ? <Loader2 className="mx-auto h-4 w-4 animate-spin" /> : totalLinks}
+          </p>
         </div>
         <div className="rounded-2xl bg-white p-3 shadow-sm text-center">
           <AlertCircle className="mx-auto mb-1 h-5 w-5 text-amber-600" />
           <p className="text-xs text-gray-500">问题</p>
-          <p className="text-lg font-bold text-gray-900">{pendingIssues}</p>
+          <p className="text-lg font-bold text-gray-900">
+            {statsLoading ? <Loader2 className="mx-auto h-4 w-4 animate-spin" /> : pendingIssues}
+          </p>
         </div>
       </div>
 
@@ -399,6 +466,10 @@ function extractList(res) {
   return [];
 }
 
+function hasKey(obj, key) {
+  return obj && typeof obj === 'object' && key in obj;
+}
+
 function groupByType(pages) {
   return pages.reduce((acc, page) => {
     const type = page.page_type || 'other';
@@ -406,6 +477,58 @@ function groupByType(pages) {
     acc[type].push(page);
     return acc;
   }, {});
+}
+
+// 真实链接数提取：stats 中多种可能字段名
+function pickLinkCount(stats) {
+  if (!stats || typeof stats !== 'object') return null;
+  const keys = ['total_links', 'links', 'link_count', 'total_link_count', 'wiki_links', 'total_link', 'links_count'];
+  for (const k of keys) {
+    if (typeof stats[k] === 'number') return stats[k];
+  }
+  if (Array.isArray(stats.links)) return stats.links.length;
+  if (Array.isArray(stats.link_list)) return stats.link_list.length;
+  return null;
+}
+
+function graphLinkCount(graph) {
+  if (!graph) return null;
+  const edges = graph.edges || graph.data?.edges || graph.links || graph.data?.links;
+  if (Array.isArray(edges)) return edges.length;
+  return null;
+}
+
+function pagesLinkCount(pages) {
+  return pages.reduce((sum, p) => {
+    const c =
+      p.link_count ??
+      (Array.isArray(p.links) ? p.links.length : null) ??
+      p.links_count ??
+      (Array.isArray(p.outgoing_links) ? p.outgoing_links.length : null) ??
+      (Array.isArray(p.relations) ? p.relations.length : null) ??
+      (Array.isArray(p.references) ? p.references.length : null) ??
+      0;
+    return sum + (typeof c === 'number' ? c : 0);
+  }, 0);
+}
+
+function isHtmlContent(text) {
+  if (typeof text !== 'string') return false;
+  const tagPattern = /<[^\s<>/][^<>]*>/i;
+  const hasHtmlTags = tagPattern.test(text);
+  const hasMarkdown = /^#{1,6}\s|^\s*[-*+]\s|^\s*\d+\.\s|^\[.*\]\(.*\)|^\*\*.*\*\*|^__.*__|^`.*`|^```/m.test(text);
+  // 如果包含明显 HTML 标签且不像 Markdown，按 HTML 渲染
+  return hasHtmlTags && !hasMarkdown;
+}
+
+function cleanHtml(html) {
+  if (!html || typeof html !== 'string') return '';
+  return html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
+    .replace(/on\w+\s*=/gi, 'data-disabled=')
+    .replace(/javascript:/gi, 'disabled:');
 }
 
 function PageCard({ page, onClick }) {
