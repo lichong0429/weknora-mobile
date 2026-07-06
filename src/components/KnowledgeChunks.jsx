@@ -4,8 +4,8 @@ import { Knowledge } from '../api/endpoints.js';
 import { Loader2, AlertCircle, Layers, FileText, ChevronDown, ChevronUp } from 'lucide-react';
 import { clsx } from 'clsx';
 
-function KnowledgeChunks({ knowledgeId }) {
-  const { data, loading, error, run } = useAsync(() => Knowledge.chunks(knowledgeId), [knowledgeId]);
+function KnowledgeChunks({ knowledgeId, kbId }) {
+  const { data, loading, error, run } = useAsync(() => Knowledge.chunks(knowledgeId, kbId), [knowledgeId, kbId]);
   const [expanded, setExpanded] = useState(new Set());
 
   const chunks = (() => {
