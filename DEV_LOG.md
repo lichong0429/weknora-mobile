@@ -379,3 +379,31 @@ export PATH="$JAVA_HOME/bin:$PATH"
 ### 产物
 - 重新构建 `weknora-mobile-webview.apk`（版本 1.0.11），已签名。
 - 通过 GitHub Contents API 推送源码、创建 Release v1.0.11 并上传 APK。
+
+## 20. v1.0.12：修复 Wiki 链接显示/跳转、链接数、公式渲染
+
+### 问题（用户实测 v1.0.11 反馈）
+1. 公式（LaTeX `$...$` / `$$...$$`）渲染不好。
+2. Wiki 正文里的链接看不到，也无法点击跳转。
+3. Wiki 顶部「链接」数量仍为 0。
+
+### 根因（对照 WeKnora 真实数据模型）
+- WeKnora Wiki 页面间链接写在 Markdown 内容里，使用 `[[slug]]` / `[[slug|Title]]` 维基语法（非标准 `[text](url)`），ReactMarkdown 直接当纯文本显示 → 看不到也不能点。
+- 页面对象含结构化 `out_links` / `in_links`（slug 数组）与 stats 的 `total_links`，但此前兜底字段名未对上，且 stats 接口可能未返回，导致数量为 0。
+- 分层 slug（如 `entity/tencent`）此前用 `encodeURIComponent` 整体转义，把 `/` 也转义导致详情路径错误。
+- 未安装 `remark-math` / `rehype-katex`，公式无法渲染。
+
+### 解决
+- 安装 `remark-math@6`、`rehype-katex@7`、`katex@0.16`，并在 `WikiView.jsx` 引入 `katex/dist/katex.min.css`。
+- 重写 `WikiView.jsx`：
+  - 新增 `preprocessWikiLinks`：把 `[[slug|Title]]` 转成 `[Title](wiki:slug)`，由 ReactMarkdown 自定义 `a` 组件拦截 `wiki:` 协议，在应用内 `openWikiRef` 跳转；外部链接新窗口打开。
+  - 详情页底部新增「本页链接 / 反向链接」区块，渲染 `out_links` / `in_links` 为可点击胶囊（点击跳转）。
+  - 链接数：`stats.total_links` → 图谱 `getGraph` 边数 → 已加载页面 `out_links`+`in_links` 求和，三级兜底。
+  - 新增 `encodeSlugPath`：分层 slug 按 `/` 分段编码，修复详情跳转路径；`handleOpenPage` 增加 `/api/v1/knowledgebase/...` 前缀兜底尝试。
+  - 接入 `remarkMath` + `rehypeKatex` 渲染公式。
+- `src/index.css`：`.md-body a.wiki-link` 增加可识别的视觉样式。
+- `webview-app/app/build.gradle` 版本号升到 `versionCode 12 / versionName "1.0.12"`。
+
+### 产物
+- 重新构建 `weknora-mobile-webview.apk`（版本 1.0.12），已签名。
+- 通过 GitHub Contents API 推送源码、创建 Release v1.0.12 并上传 APK。

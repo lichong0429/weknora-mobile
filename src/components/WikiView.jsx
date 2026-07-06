@@ -5,11 +5,14 @@ import { Wiki } from '../api/endpoints.js';
 import { get } from '../api/client.js';
 import {
   BookOpen, Search, Loader2, AlertCircle, FileText, Folder, ChevronRight,
-  BarChart3, LayoutGrid, List, ArrowLeft, Bug
+  BarChart3, LayoutGrid, List, ArrowLeft, Bug, Link2
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 
 const PAGE_TYPE_ORDER = ['summary', 'entity', 'concept', 'synthesis', 'comparison'];
 const PAGE_TYPE_LABELS = {
@@ -20,6 +23,24 @@ const PAGE_TYPE_LABELS = {
   comparison: '对比'
 };
 const PAGE_SIZE = 20;
+
+// 分层 slug（如 entity/tencent）按段编码，避免把 "/" 也转义
+function encodeSlugPath(slug) {
+  if (!slug) return '';
+  return String(slug).split('/').map(encodeURIComponent).join('/');
+}
+
+// 将 WeKnora 维基语法 [[slug]] / [[slug|Title]] 转换为 Markdown 链接 [Title](wiki:slug)
+// 这样 ReactMarkdown 能渲染成可点击元素，由自定义 a 组件拦截 wiki: 协议做应用内跳转
+function preprocessWikiLinks(text) {
+  if (typeof text !== 'string') return '';
+  return text.replace(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g, (m, slug, title) => {
+    const s = String(slug).trim();
+    const t = (title && title.trim()) || s;
+    if (!s) return m;
+    return `[${t}](wiki:${s})`;
+  });
+}
 
 function WikiView({ kbId }) {
   const navigate = useNavigate();
@@ -48,7 +69,7 @@ function WikiView({ kbId }) {
   );
   const stats = statsRes?.data || statsRes;
 
-  // 用知识图谱的边数作为「链接」数量的兜底数据源（wiki 页面之间的链接）
+  // 图谱（链接边）作为链接数的兜底数据源
   const { data: graphRes } = useAsync(
     () => Wiki.getGraph(kbId).catch(() => null),
     [kbId]
@@ -89,7 +110,12 @@ function WikiView({ kbId }) {
         const items = extractList(res);
         setPages((prev) => (pageToLoad === 1 ? items : [...prev, ...items]));
         // 后端返回满一页时继续加载，返回不足一页或空时结束
-        setHasMore(items.length === PAGE_SIZE);
+        const meta = res?.data || res;
+        if (meta && typeof meta.total_pages === 'number') {
+          setHasMore(pageToLoad < meta.total_pages);
+        } else {
+          setHasMore(items.length === PAGE_SIZE);
+        }
         return true;
       } catch (err) {
         attempts.push({ source: label, ok: false, error: err.message });
@@ -132,6 +158,19 @@ function WikiView({ kbId }) {
     if (node) observerRef.current.observe(node);
   }, [listLoading, loadingMore, loadMore]);
 
+  // 根据 slug / id / title 在已加载页面中查找匹配项
+  const findPageByRef = useCallback((ref) => {
+    if (!ref) return null;
+    const norm = (s) => String(s || '').toLowerCase().trim();
+    const r = norm(ref);
+    return pages.find((p) =>
+      p.slug === ref || p.id === ref ||
+      (p.slug && norm(p.slug) === r) ||
+      (p.id && norm(p.id) === r) ||
+      (p.title && norm(p.title) === r.replace(/-/g, ' '))
+    );
+  }, [pages]);
+
   const handleOpenPage = useCallback(async (page) => {
     setSelectedPage(page);
     setPageLoading(true);
@@ -139,30 +178,34 @@ function WikiView({ kbId }) {
     setPageDetail(null);
     setPageLoadErrors([]);
 
-    const id = page.id || page.page_id || page.slug || '';
-    const slug = page.slug || page.id || page.page_id || '';
-    const paths = [
-      `/knowledge-bases/${kbId}/wiki/pages/${encodeURIComponent(id)}`,
-      `/knowledge-bases/${kbId}/wiki/pages/${encodeURIComponent(slug)}`,
-      `/knowledge-bases/${kbId}/wiki/page/${encodeURIComponent(id)}`,
-      `/knowledge-bases/${kbId}/wiki/page/${encodeURIComponent(slug)}`,
-      `/knowledge-bases/${kbId}/wiki/${encodeURIComponent(id)}`,
-      `/knowledge-bases/${kbId}/wiki/${encodeURIComponent(slug)}`,
-      `/knowledgebase/${kbId}/wiki/pages/${encodeURIComponent(id)}`,
-      `/knowledgebase/${kbId}/wiki/pages/${encodeURIComponent(slug)}`,
+    const rawId = page.id || page.page_id || page.slug || '';
+    const rawSlug = page.slug || page.id || page.page_id || '';
+    const seg = encodeSlugPath(rawId || rawSlug);
+
+    const pathSets = [
+      `/knowledge-bases/${kbId}/wiki/pages/`,
+      `/knowledge-bases/${kbId}/wiki/page/`,
+      `/knowledge-bases/${kbId}/wiki/`,
+      `/api/v1/knowledgebase/${kbId}/wiki/pages/`,
+      `/api/v1/knowledgebase/${kbId}/wiki/page/`,
+      `/knowledgebase/${kbId}/wiki/pages/`
     ];
 
     const attempts = [];
-    for (const path of paths) {
-      try {
-        const res = await get(path);
-        attempts.push({ source: path, ok: true, status: 'success' });
-        setPageLoadErrors(attempts);
-        setPageDetail(res?.data || res);
-        setPageLoading(false);
-        return;
-      } catch (err) {
-        attempts.push({ source: path, ok: false, error: err.message });
+    for (const prefix of pathSets) {
+      for (const id of [seg, encodeSlugPath(rawSlug), rawId, rawSlug]) {
+        if (!id) continue;
+        const path = prefix + id;
+        try {
+          const res = await get(path);
+          attempts.push({ source: path, ok: true, status: 'success' });
+          setPageLoadErrors(attempts);
+          setPageDetail(res?.data || res);
+          setPageLoading(false);
+          return;
+        } catch (err) {
+          attempts.push({ source: path, ok: false, error: err.message });
+        }
       }
     }
 
@@ -171,57 +214,61 @@ function WikiView({ kbId }) {
     setPageLoading(false);
   }, [kbId]);
 
-  // 点击 wiki 内容里的链接（MD 或 HTML 渲染出的 <a>）时在应用内跳转
-  const openWikiLink = useCallback((href) => {
-    if (!href) return;
-    // 外部链接：尽力在新窗口打开
-    if (/^https?:\/\//i.test(href)) {
-      try { window.open(href, '_blank'); } catch {}
-      return;
-    }
-    // 提取 /wiki/ 之后的最后一段作为 slug
-    let seg = href.split('/wiki/').pop();
-    seg = (seg || '').split('?')[0].split('#')[0].replace(/^\/+|\/+$/g, '');
-    const slug = decodeURIComponent(seg);
-    if (!slug) return;
-    const match = pages.find((p) =>
-      p.slug === slug || p.id === slug || p.page_id === slug ||
-      (p.slug && p.slug.toLowerCase() === slug.toLowerCase()) ||
-      (p.title && p.title.toLowerCase() === slug.toLowerCase().replace(/-/g, ' '))
-    );
+  // 点击「维基链接」或正文里的内部链接时，在应用内跳转到对应页面
+  const openWikiRef = useCallback((ref) => {
+    if (!ref) return;
+    const match = findPageByRef(ref);
     if (match) {
       handleOpenPage(match);
     } else {
-      // 兜底：直接尝试用 slug 打开
-      handleOpenPage({ slug, id: slug, title: slug });
+      // 兜底：直接用 slug 尝试打开详情
+      handleOpenPage({ slug: ref, id: ref, title: ref });
     }
-  }, [pages, handleOpenPage]);
+  }, [findPageByRef, handleOpenPage]);
 
+  // 点击 wiki 内容里的 <a>（HTML 渲染路径）时拦截内部跳转
   const handleContentClick = useCallback((e) => {
     const a = e.target.closest('a');
     if (!a) return;
     const href = a.getAttribute('href');
     if (!href) return;
     e.preventDefault();
-    openWikiLink(href);
-  }, [openWikiLink]);
+    if (href.startsWith('wiki:')) {
+      openWikiRef(href.slice(5));
+      return;
+    }
+    // 提取 /wiki/ 之后的最后一段作为 slug
+    let seg = href.split('/wiki/').pop();
+    seg = (seg || '').split('?')[0].split('#')[0].replace(/^\/+|\/+$/g, '');
+    if (seg) openWikiRef(decodeURIComponent(seg));
+    else if (/^https?:\/\//i.test(href)) {
+      try { window.open(href, '_blank'); } catch {}
+    }
+  }, [openWikiRef]);
 
   const grouped = groupByType(pages);
 
   const pageContent = pageDetail?.content || pageDetail?.body || pageDetail?.markdown || pageDetail?.text || pageDetail?.html || '';
 
-  // 从 stats / 图谱 / 页面 多源兜底计算「链接」数量
-  const totalLinks = pickLinkCount(stats)
-    ?? graphLinkCount(graph)
-    ?? pagesLinkCount(pages)
-    ?? 0;
+  // 链接数量：stats.total_links → 图谱边数 → 已加载页面 out/in_links 求和
+  const statsLinks = (stats && typeof stats.total_links === 'number') ? stats.total_links : null;
+  const graphLinks = (graph && Array.isArray(graph.edges)) ? graph.edges.length : null;
+  const pagesLinkSum = pages.reduce((s, p) =>
+    s + (Array.isArray(p.out_links) ? p.out_links.length : 0)
+      + (Array.isArray(p.in_links) ? p.in_links.length : 0), 0);
+  const totalLinks = statsLinks ?? graphLinks ?? pagesLinkSum ?? 0;
 
   // 页面数：优先 stats，否则已加载页数
-  const totalPages = stats && hasKey(stats, 'total_pages') ? stats.total_pages : pages.length;
-  const pendingIssues = stats && hasKey(stats, 'pending_issues') ? stats.pending_issues : 0;
+  const totalPages = (stats && typeof stats.total_pages === 'number') ? stats.total_pages : pages.length;
+  const pendingIssues = (stats && typeof stats.pending_issues === 'number') ? stats.pending_issues : 0;
+
+  // 当前页的出链 / 入链（结构化字段）
+  const outLinks = Array.isArray(pageDetail?.out_links) ? pageDetail.out_links : [];
+  const inLinks = Array.isArray(pageDetail?.in_links) ? pageDetail.in_links : [];
 
   if (selectedPage) {
     const isHtml = isHtmlContent(pageContent);
+    const mdSource = preprocessWikiLinks(pageContent);
     return (
       <div className="fixed inset-0 z-40 flex flex-col bg-gray-50">
         <header className="safe-top flex items-center gap-2 bg-white px-4 py-3 shadow-sm">
@@ -232,7 +279,7 @@ function WikiView({ kbId }) {
             <ArrowLeft className="h-5 w-5" /> 返回
           </button>
           <h2 className="min-w-0 flex-1 truncate text-base font-semibold text-gray-900">
-            {selectedPage.title}
+            {selectedPage.title || pageDetail?.title}
           </h2>
         </header>
         <div className="flex-1 overflow-y-auto no-scrollbar pb-20">
@@ -240,11 +287,11 @@ function WikiView({ kbId }) {
             <div className="rounded-2xl bg-white p-4 shadow-sm">
               <div className="mb-3 flex flex-wrap gap-2">
                 <span className="rounded-lg bg-blue-50 px-2 py-1 text-xs text-blue-600">
-                  {PAGE_TYPE_LABELS[selectedPage.page_type] || selectedPage.page_type || '页面'}
+                  {PAGE_TYPE_LABELS[selectedPage.page_type || pageDetail?.page_type] || (selectedPage.page_type || pageDetail?.page_type) || '页面'}
                 </span>
-                {selectedPage.version && (
+                {(selectedPage.version || pageDetail?.version) && (
                   <span className="rounded-lg bg-gray-100 px-2 py-1 text-xs text-gray-600">
-                    v{selectedPage.version}
+                    v{selectedPage.version || pageDetail?.version}
                   </span>
                 )}
               </div>
@@ -272,16 +319,51 @@ function WikiView({ kbId }) {
                   )}
                 </div>
               ) : pageContent ? (
-                <div
-                  className="md-body"
-                  onClick={handleContentClick}
-                >
-                  {isHtml ? (
-                    <div dangerouslySetInnerHTML={{ __html: cleanHtml(pageContent) }} />
-                  ) : (
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{pageContent}</ReactMarkdown>
+                <>
+                  <div
+                    className="md-body"
+                    onClick={isHtml ? handleContentClick : undefined}
+                  >
+                    {isHtml ? (
+                      <div dangerouslySetInnerHTML={{ __html: cleanHtml(pageContent) }} />
+                    ) : (
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm, remarkMath]}
+                        rehypePlugins={[rehypeKatex]}
+                        components={{
+                          a: ({ href, children, ...props }) => {
+                            if (href && href.startsWith('wiki:')) {
+                              const ref = href.slice(5);
+                              return (
+                                <a
+                                  href="#"
+                                  className="wiki-link"
+                                  onClick={(e) => { e.preventDefault(); openWikiRef(ref); }}
+                                >{children}</a>
+                              );
+                            }
+                            if (href && /^https?:\/\//i.test(href)) {
+                              return <a href={href} target="_blank" rel="noreferrer" {...props}>{children}</a>;
+                            }
+                            return <a href={href} {...props}>{children}</a>;
+                          }
+                        }}
+                      >{mdSource}</ReactMarkdown>
+                    )}
+                  </div>
+
+                  {/* 出链 / 入链（结构化字段，可点击跳转） */}
+                  {(outLinks.length > 0 || inLinks.length > 0) && (
+                    <div className="mt-5 border-t border-gray-100 pt-4">
+                      {outLinks.length > 0 && (
+                        <LinkSection title="本页链接" links={outLinks} onOpen={openWikiRef} />
+                      )}
+                      {inLinks.length > 0 && (
+                        <LinkSection title="反向链接" links={inLinks} onOpen={openWikiRef} />
+                      )}
+                    </div>
                   )}
-                </div>
+                </>
               ) : (
                 <div className="py-8 text-center text-sm text-gray-400">暂无内容</div>
               )}
@@ -454,6 +536,27 @@ function WikiView({ kbId }) {
   );
 }
 
+function LinkSection({ title, links, onOpen }) {
+  return (
+    <div className="mb-3">
+      <p className="mb-2 flex items-center gap-1 text-xs font-semibold text-gray-500">
+        <Link2 className="h-3.5 w-3.5" /> {title}（{links.length}）
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {links.map((ref, i) => (
+          <button
+            key={i}
+            onClick={() => onOpen(ref)}
+            className="rounded-full bg-blue-50 px-3 py-1.5 text-xs text-blue-700 active:scale-95"
+          >
+            {ref}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function extractList(res) {
   if (!res) return [];
   if (Array.isArray(res)) return res;
@@ -477,39 +580,6 @@ function groupByType(pages) {
     acc[type].push(page);
     return acc;
   }, {});
-}
-
-// 真实链接数提取：stats 中多种可能字段名
-function pickLinkCount(stats) {
-  if (!stats || typeof stats !== 'object') return null;
-  const keys = ['total_links', 'links', 'link_count', 'total_link_count', 'wiki_links', 'total_link', 'links_count'];
-  for (const k of keys) {
-    if (typeof stats[k] === 'number') return stats[k];
-  }
-  if (Array.isArray(stats.links)) return stats.links.length;
-  if (Array.isArray(stats.link_list)) return stats.link_list.length;
-  return null;
-}
-
-function graphLinkCount(graph) {
-  if (!graph) return null;
-  const edges = graph.edges || graph.data?.edges || graph.links || graph.data?.links;
-  if (Array.isArray(edges)) return edges.length;
-  return null;
-}
-
-function pagesLinkCount(pages) {
-  return pages.reduce((sum, p) => {
-    const c =
-      p.link_count ??
-      (Array.isArray(p.links) ? p.links.length : null) ??
-      p.links_count ??
-      (Array.isArray(p.outgoing_links) ? p.outgoing_links.length : null) ??
-      (Array.isArray(p.relations) ? p.relations.length : null) ??
-      (Array.isArray(p.references) ? p.references.length : null) ??
-      0;
-    return sum + (typeof c === 'number' ? c : 0);
-  }, 0);
 }
 
 function isHtmlContent(text) {
