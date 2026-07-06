@@ -19,6 +19,7 @@ const PAGE_TYPE_LABELS = {
   synthesis: '综合',
   comparison: '对比'
 };
+const PAGE_SIZE = 20;
 
 function WikiView({ kbId }) {
   const navigate = useNavigate();
@@ -30,7 +31,7 @@ function WikiView({ kbId }) {
   const [pageLoading, setPageLoading] = useState(false);
   const [pageError, setPageError] = useState(null);
   const [pages, setPages] = useState([]);
-  const [pageParams, setPageParams] = useState({ page: 1, page_size: 20 });
+  const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [listLoading, setListLoading] = useState(false);
@@ -58,81 +59,61 @@ function WikiView({ kbId }) {
     return () => clearTimeout(timer);
   }, [query]);
 
-  const loadPages = useCallback(async () => {
-    setListLoading(true);
+  // 分页参数变化时重置页码
+  useEffect(() => {
+    setPage(1);
+    setPages([]);
+    setHasMore(true);
+  }, [kbId, debouncedQuery]);
+
+  const loadPages = useCallback(async (pageToLoad, isAppend = false) => {
+    if (pageToLoad === 1) setListLoading(true);
+    else setLoadingMore(true);
     setListError(null);
     setLoadErrors([]);
 
+    const params = { page: pageToLoad, page_size: PAGE_SIZE };
     const attempts = [];
 
-    // Try 1: listPages
-    try {
-      const res = await Wiki.listPages(kbId, pageParams);
-      attempts.push({ source: 'Wiki.listPages', ok: true, status: 'success' });
-      handleListResponse(res);
-      setListLoading(false);
-      return;
-    } catch (err) {
-      attempts.push({ source: 'Wiki.listPages', ok: false, error: err.message });
+    const tryFetch = async (label, fn) => {
+      try {
+        const res = await fn();
+        attempts.push({ source: label, ok: true, status: 'success' });
+        const items = extractList(res);
+        setPages((prev) => (pageToLoad === 1 ? items : [...prev, ...items]));
+        // 后端返回满一页时继续加载，返回不足一页或空时结束
+        setHasMore(items.length === PAGE_SIZE);
+        return true;
+      } catch (err) {
+        attempts.push({ source: label, ok: false, error: err.message });
+        return false;
+      }
+    };
+
+    const ok = await tryFetch('Wiki.listPages', () => Wiki.listPages(kbId, params))
+      || await tryFetch('Wiki.getIndex', () => Wiki.getIndex(kbId, params))
+      || await tryFetch('GET /knowledge-bases/{id}/wiki', () => get(`/knowledge-bases/${kbId}/wiki`, params))
+      || await tryFetch('GET /knowledgebase/{id}/wiki/pages (legacy)', () => get(`/knowledgebase/${kbId}/wiki/pages`, params));
+
+    if (!ok) {
+      setLoadErrors(attempts);
+      setListError('所有 Wiki 页面接口均无法获取数据，请确认该知识库已启用 Wiki 并检查后端版本。');
+      if (pageToLoad === 1) setPages([]);
+      setHasMore(false);
     }
 
-    // Try 2: getIndex
-    try {
-      const res = await Wiki.getIndex(kbId, pageParams);
-      attempts.push({ source: 'Wiki.getIndex', ok: true, status: 'success' });
-      handleListResponse(res);
-      setListLoading(false);
-      return;
-    } catch (err) {
-      attempts.push({ source: 'Wiki.getIndex', ok: false, error: err.message });
-    }
-
-    // Try 3: plain wiki root
-    try {
-      const res = await get(`/knowledge-bases/${kbId}/wiki`, pageParams);
-      attempts.push({ source: 'GET /knowledge-bases/{id}/wiki', ok: true, status: 'success' });
-      handleListResponse(res);
-      setListLoading(false);
-      return;
-    } catch (err) {
-      attempts.push({ source: 'GET /knowledge-bases/{id}/wiki', ok: false, error: err.message });
-    }
-
-    // Try 4: old /api/knowledgebase path (legacy)
-    try {
-      const res = await get(`/knowledgebase/${kbId}/wiki/pages`, pageParams);
-      attempts.push({ source: 'GET /knowledgebase/{id}/wiki/pages (legacy)', ok: true, status: 'success' });
-      handleListResponse(res);
-      setListLoading(false);
-      return;
-    } catch (err) {
-      attempts.push({ source: 'GET /knowledgebase/{id}/wiki/pages (legacy)', ok: false, error: err.message });
-    }
-
-    setLoadErrors(attempts);
-    setListError('所有 Wiki 页面接口均无法获取数据，请确认该知识库已启用 Wiki 并检查后端版本。');
-    setPages((prev) => (pageParams.page === 1 ? [] : prev));
-    setHasMore(false);
-    setLoadingMore(false);
     setListLoading(false);
-  }, [kbId, pageParams]);
-
-  const handleListResponse = useCallback((res) => {
-    const items = extractList(res);
-    const total = res?.total || res?.data?.total || res?.pagination?.total || items.length;
-    setPages((prev) => (pageParams.page === 1 ? items : [...prev, ...items]));
-    setHasMore(items.length > 0 && pages.length + items.length < total);
     setLoadingMore(false);
-  }, [pageParams.page, pages.length]);
+  }, [kbId]);
 
   useEffect(() => {
-    loadPages();
-  }, [loadPages]);
+    if (debouncedQuery) return; // 搜索时不自动加载
+    loadPages(page, page > 1);
+  }, [debouncedQuery, loadPages, page]);
 
   const loadMore = useCallback(() => {
     if (loadingMore || !hasMore || debouncedQuery) return;
-    setLoadingMore(true);
-    setPageParams((p) => ({ ...p, page: p.page + 1 }));
+    setPage((p) => p + 1);
   }, [loadingMore, hasMore, debouncedQuery]);
 
   const lastItemRef = useCallback((node) => {
@@ -186,6 +167,13 @@ function WikiView({ kbId }) {
   const grouped = groupByType(pages);
 
   const pageContent = pageDetail?.content || pageDetail?.body || pageDetail?.markdown || pageDetail?.text || pageDetail?.html || '';
+
+  // 从 stats 或 pages 数据计算统计信息
+  const totalPages = stats && 'total_pages' in stats ? stats.total_pages : pages.length;
+  const totalLinks = stats && 'total_links' in stats
+    ? stats.total_links
+    : pages.reduce((sum, p) => sum + (p.link_count || p.links?.length || p.links_count || 0), 0);
+  const pendingIssues = stats && 'pending_issues' in stats ? stats.pending_issues : 0;
 
   if (selectedPage) {
     return (
@@ -250,17 +238,17 @@ function WikiView({ kbId }) {
         <div className="rounded-2xl bg-white p-3 shadow-sm text-center">
           <BarChart3 className="mx-auto mb-1 h-5 w-5 text-blue-600" />
           <p className="text-xs text-gray-500">页面</p>
-          <p className="text-lg font-bold text-gray-900">{stats?.total_pages ?? pages.length ?? 0}</p>
+          <p className="text-lg font-bold text-gray-900">{totalPages}</p>
         </div>
         <div className="rounded-2xl bg-white p-3 shadow-sm text-center">
           <BookOpen className="mx-auto mb-1 h-5 w-5 text-green-600" />
           <p className="text-xs text-gray-500">链接</p>
-          <p className="text-lg font-bold text-gray-900">{stats?.total_links || 0}</p>
+          <p className="text-lg font-bold text-gray-900">{totalLinks}</p>
         </div>
         <div className="rounded-2xl bg-white p-3 shadow-sm text-center">
           <AlertCircle className="mx-auto mb-1 h-5 w-5 text-amber-600" />
           <p className="text-xs text-gray-500">问题</p>
-          <p className="text-lg font-bold text-gray-900">{stats?.pending_issues || 0}</p>
+          <p className="text-lg font-bold text-gray-900">{pendingIssues}</p>
         </div>
       </div>
 
@@ -326,7 +314,7 @@ function WikiView({ kbId }) {
 
       {!debouncedQuery && (
         <div className="space-y-3">
-          {listLoading && pageParams.page === 1 && (
+          {listLoading && page === 1 && (
             <div className="py-8 text-center text-sm text-gray-500">
               <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> 加载 Wiki…
             </div>
@@ -384,14 +372,14 @@ function WikiView({ kbId }) {
             </div>
           )}
 
-          {(loadingMore || listLoading) && pageParams.page > 1 && (
+          {(loadingMore || listLoading) && page > 1 && (
             <div className="py-3 text-center text-sm text-gray-500">
               <Loader2 className="mx-auto mb-1 h-4 w-4 animate-spin" /> 加载中…
             </div>
           )}
 
           {!hasMore && pages.length > 0 && !debouncedQuery && (
-            <div className="py-3 text-center text-xs text-gray-400">已加载全部 Wiki 页面</div>
+            <div className="py-3 text-center text-xs text-gray-400">已加载全部 {pages.length} 个 Wiki 页面</div>
           )}
         </div>
       )}

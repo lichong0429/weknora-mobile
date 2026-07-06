@@ -1,12 +1,21 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
 import { Knowledge } from '../api/endpoints.js';
 import { get } from '../api/client.js';
-import { Loader2, AlertCircle, Trash2, RefreshCw, XCircle, Save, ArrowLeft } from 'lucide-react';
+import { Loader2, AlertCircle, Trash2, RefreshCw, XCircle, Save, ArrowLeft, ChevronDown, ChevronUp, FileText } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import KnowledgeChunks from './KnowledgeChunks.jsx';
+
+const PREVIEW_MAX_LEN = 6000;
+const PREVIEW_TIMEOUT_MS = 8000;
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('请求超时')), ms))
+  ]);
+}
 
 function KnowledgeDetail() {
   const { id } = useParams();
@@ -19,6 +28,7 @@ function KnowledgeDetail() {
   const [previewError, setPreviewError] = useState(null);
   const [previewDebug, setPreviewDebug] = useState([]);
   const [showPreviewDebug, setShowPreviewDebug] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -30,68 +40,90 @@ function KnowledgeDetail() {
     if (knowledge) {
       setTitle(knowledge.title || '');
       setDescription(knowledge.description || '');
-      loadPreview();
+      // 延迟加载 preview，避免页面切换时阻塞
+      const timer = setTimeout(() => loadPreview(), 50);
+      return () => clearTimeout(timer);
     }
   }, [knowledge]);
 
-  const loadPreview = async () => {
+  const loadPreview = useCallback(async () => {
     setPreviewLoading(true);
     setPreviewError(null);
     setPreviewDebug([]);
+    setExpanded(false);
     const attempts = [];
 
     try {
-      const res = await Knowledge.preview(id);
-      attempts.push({ source: 'GET /knowledge/{id}/preview (text)', ok: true, status: 'success' });
-      setPreviewDebug(attempts);
-      const text = typeof res === 'string' ? res : JSON.stringify(res, null, 2);
-      setPreview(text);
-      if (knowledge?.type === 'manual') setContent(text);
-      setPreviewLoading(false);
-      return;
-    } catch (err) {
-      attempts.push({ source: 'GET /knowledge/{id}/preview (text)', ok: false, error: err.message });
-    }
+      // 1. 优先从 knowledge 详情字段提取（避免额外请求，很多后端已经把文本放在 detail 里）
+      const detailText = extractPreviewText(knowledge);
+      if (detailText && detailText.trim().length > 0) {
+        attempts.push({ source: 'knowledge.detail 字段', ok: true, status: 'success' });
+        setPreview(detailText);
+        setPreviewDebug(attempts);
+        setPreviewLoading(false);
+        return;
+      }
 
-    try {
-      const res = await get(`/knowledge/${id}/preview`);
-      attempts.push({ source: 'GET /knowledge/{id}/preview (json)', ok: true, status: 'success' });
-      setPreviewDebug(attempts);
-      const text = extractPreviewText(res);
-      setPreview(text);
-      if (knowledge?.type === 'manual') setContent(text);
-      setPreviewLoading(false);
-      return;
-    } catch (err) {
-      attempts.push({ source: 'GET /knowledge/{id}/preview (json)', ok: false, error: err.message });
-    }
+      // 2. 文本 preview 接口
+      try {
+        const text = await withTimeout(Knowledge.preview(id), PREVIEW_TIMEOUT_MS);
+        if (text && text.trim().length > 0) {
+          attempts.push({ source: 'GET /knowledge/{id}/preview (text)', ok: true, status: 'success' });
+          setPreview(text);
+          setPreviewDebug(attempts);
+          setPreviewLoading(false);
+          return;
+        }
+      } catch (err) {
+        attempts.push({ source: 'GET /knowledge/{id}/preview (text)', ok: false, error: err.message });
+      }
 
-    try {
-      const res = await get(`/knowledge/${id}`);
-      attempts.push({ source: 'GET /knowledge/{id}', ok: true, status: 'success' });
-      setPreviewDebug(attempts);
-      const text = extractPreviewText(res?.data || res);
-      setPreview(text);
-      if (knowledge?.type === 'manual') setContent(text);
-      setPreviewLoading(false);
-      return;
-    } catch (err) {
-      attempts.push({ source: 'GET /knowledge/{id}', ok: false, error: err.message });
-    }
+      // 3. JSON preview 接口
+      try {
+        const res = await withTimeout(get(`/knowledge/${id}/preview`), PREVIEW_TIMEOUT_MS);
+        const text = extractPreviewText(res);
+        if (text && text.trim().length > 0) {
+          attempts.push({ source: 'GET /knowledge/{id}/preview (json)', ok: true, status: 'success' });
+          setPreview(text);
+          setPreviewDebug(attempts);
+          setPreviewLoading(false);
+          return;
+        }
+      } catch (err) {
+        attempts.push({ source: 'GET /knowledge/{id}/preview (json)', ok: false, error: err.message });
+      }
 
-    setPreviewDebug(attempts);
-    setPreviewError('无法加载预览，所有接口均失败。');
-    setPreviewLoading(false);
-  };
+      // 4. 知识详情接口兜底
+      try {
+        const res = await withTimeout(get(`/knowledge/${id}`), PREVIEW_TIMEOUT_MS);
+        const text = extractPreviewText(res?.data || res);
+        if (text && text.trim().length > 0) {
+          attempts.push({ source: 'GET /knowledge/{id}', ok: true, status: 'success' });
+          setPreview(text);
+          setPreviewDebug(attempts);
+          setPreviewLoading(false);
+          return;
+        }
+      } catch (err) {
+        attempts.push({ source: 'GET /knowledge/{id}', ok: false, error: err.message });
+      }
+
+      setPreviewDebug(attempts);
+      setPreviewError('无法加载预览内容，所有接口均返回空或失败。');
+    } catch (err) {
+      setPreviewError(err.message || '加载预览失败');
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [id, knowledge]);
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      const payload = { title, description };
       if (knowledge.type === 'manual') {
         await Knowledge.updateManual(id, { title, content, description });
       } else {
-        await Knowledge.update(id, payload);
+        await Knowledge.update(id, { title, description });
       }
       run();
       setEditing(false);
@@ -147,6 +179,10 @@ function KnowledgeDetail() {
   }
 
   if (!knowledge) return null;
+
+  const isHtml = isHtmlContent(preview);
+  const displayPreview = expanded ? preview : preview.slice(0, PREVIEW_MAX_LEN);
+  const isTruncated = preview.length > PREVIEW_MAX_LEN;
 
   return (
     <div className="p-4">
@@ -244,8 +280,16 @@ function KnowledgeDetail() {
 
           <div className="rounded-2xl bg-white p-4 shadow-sm">
             <div className="mb-3 flex items-center justify-between">
-              <h3 className="font-semibold text-gray-900">预览</h3>
-              <button onClick={loadPreview} className="text-xs text-blue-600">刷新</button>
+              <div className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-blue-600" />
+                <h3 className="font-semibold text-gray-900">预览</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                {preview.length > 0 && (
+                  <span className="text-xs text-gray-400">{preview.length} 字符</span>
+                )}
+                <button onClick={loadPreview} className="text-xs text-blue-600">刷新</button>
+              </div>
             </div>
             {previewLoading ? (
               <div className="py-8 text-center text-sm text-gray-500">
@@ -271,20 +315,34 @@ function KnowledgeDetail() {
                 )}
               </div>
             ) : preview ? (
-              <div className="prose prose-sm max-w-none text-sm text-gray-700">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{preview}</ReactMarkdown>
+              <div className="space-y-3">
+                {isHtml ? (
+                  <div
+                    className="prose prose-sm max-w-none text-sm text-gray-700 overflow-x-auto"
+                    dangerouslySetInnerHTML={{ __html: cleanHtml(displayPreview) }}
+                  />
+                ) : (
+                  <div className="prose prose-sm max-w-none text-sm text-gray-700">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayPreview}</ReactMarkdown>
+                  </div>
+                )}
+                {isTruncated && (
+                  <button
+                    onClick={() => setExpanded(!expanded)}
+                    className="flex w-full items-center justify-center gap-1 rounded-xl bg-gray-50 py-2 text-xs font-medium text-gray-600"
+                  >
+                    {expanded ? (
+                      <><ChevronUp className="h-4 w-4" /> 收起</>
+                    ) : (
+                      <><ChevronDown className="h-4 w-4" /> 展开全部 ({preview.length} 字符)</>
+                    )}
+                  </button>
+                )}
               </div>
             ) : (
               <div className="py-8 text-center text-sm text-gray-400">暂无预览内容</div>
             )}
           </div>
-
-          {knowledge.type !== 'manual' && (
-            <div className="rounded-2xl bg-white p-4 shadow-sm">
-              <h3 className="mb-3 font-semibold text-gray-900">分块</h3>
-              <KnowledgeChunks knowledgeId={id} kbId={knowledge.knowledge_base_id} />
-            </div>
-          )}
         </>
       )}
     </div>
@@ -294,11 +352,30 @@ function KnowledgeDetail() {
 function extractPreviewText(data) {
   if (!data) return '';
   if (typeof data === 'string') return data;
-  const candidates = [data.preview, data.content, data.text, data.body, data.markdown, data.html];
+  const candidates = [data.content, data.text, data.preview, data.body, data.markdown, data.html, data.answer, data.document];
   for (const c of candidates) {
     if (typeof c === 'string') return c;
   }
   return JSON.stringify(data, null, 2);
+}
+
+function isHtmlContent(text) {
+  if (typeof text !== 'string') return false;
+  const tagPattern = /<[^\s<>/][^<>]*>/i;
+  const hasHtmlTags = tagPattern.test(text);
+  const hasMarkdown = /^#{1,6}\s|^\s*[-*+]\s|^\s*\d+\.\s|^\[.*\]\(.*\)|^\*\*.*\*\*|^__.*__|^`.*`|^```/m.test(text);
+  // 如果包含明显 HTML 标签且不像 Markdown，按 HTML 渲染
+  return hasHtmlTags && !hasMarkdown;
+}
+
+function cleanHtml(html) {
+  if (!html || typeof html !== 'string') return '';
+  return html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
+    .replace(/on\w+\s*=/gi, 'data-disabled=')
+    .replace(/javascript:/gi, 'disabled:');
 }
 
 export default KnowledgeDetail;
