@@ -267,3 +267,27 @@ export PATH="$JAVA_HOME/bin:$PATH"
 ### 产物
 - 重新构建 `weknora-mobile-webview.apk`（4.7 MB），版本号 1.0.6，已签名。
 - 通过 GitHub Contents API 推送源码、创建 Release v1.0.6 并上传 APK。
+
+---
+
+## 15. v1.0.7：修复 Wiki 详情页 404
+
+### 问题
+- v1.0.6 后 Wiki 列表已显示，但点击条目进入详情页仍报 404。
+
+### 根因排查
+- 列表返回的页面可能用 `id` 标识而非 `slug`，而详情接口路径可能是 `/wiki/pages/{id}`、`/wiki/page/{id}` 或 `/wiki/{id}`，不一定沿用 `/wiki/pages/{slug}`。
+- 页面内容字段可能不是 `content`，而是 `body`、`markdown`、`text` 或 `html`。
+
+### 解决
+- 重写 `handleOpenPage`：依次尝试用 `id` 和 `slug` 请求多种路径：
+  - `/knowledge-bases/{id}/wiki/pages/{id|slug}`
+  - `/knowledge-bases/{id}/wiki/page/{id|slug}`
+  - `/knowledge-bases/{id}/wiki/{id|slug}`
+  - `/knowledgebase/{id}/wiki/pages/{id|slug}` (legacy)
+- 读取详情内容时兼容 `content / body / markdown / text / html`。
+- 详情页错误时增加调试信息，列出每个尝试路径和错误。
+
+### 产物
+- 重新构建 `weknora-mobile-webview.apk`（4.7 MB），版本号 1.0.7，已签名。
+- 通过 GitHub Contents API 推送源码、创建 Release v1.0.7 并上传 APK。
