@@ -37,6 +37,8 @@ function WikiView({ kbId }) {
   const [listError, setListError] = useState(null);
   const [loadErrors, setLoadErrors] = useState([]);
   const [showDebug, setShowDebug] = useState(false);
+  const [pageLoadErrors, setPageLoadErrors] = useState([]);
+  const [showPageDebug, setShowPageDebug] = useState(false);
   const observerRef = useRef();
 
   const { data: statsRes, loading: statsLoading } = useAsync(
@@ -147,20 +149,43 @@ function WikiView({ kbId }) {
     setPageLoading(true);
     setPageError(null);
     setPageDetail(null);
-    try {
-      const res = await Wiki.getPage(kbId, page.slug).catch(async () => {
-        // fallback to slug as id
-        return get(`/knowledge-bases/${kbId}/wiki/pages/${encodeURIComponent(page.id || page.slug)}`);
-      });
-      setPageDetail(res?.data || res);
-    } catch (err) {
-      setPageError(err.message || '加载页面失败');
-    } finally {
-      setPageLoading(false);
+    setPageLoadErrors([]);
+
+    const id = page.id || page.page_id || page.slug || '';
+    const slug = page.slug || page.id || page.page_id || '';
+    const paths = [
+      `/knowledge-bases/${kbId}/wiki/pages/${encodeURIComponent(id)}`,
+      `/knowledge-bases/${kbId}/wiki/pages/${encodeURIComponent(slug)}`,
+      `/knowledge-bases/${kbId}/wiki/page/${encodeURIComponent(id)}`,
+      `/knowledge-bases/${kbId}/wiki/page/${encodeURIComponent(slug)}`,
+      `/knowledge-bases/${kbId}/wiki/${encodeURIComponent(id)}`,
+      `/knowledge-bases/${kbId}/wiki/${encodeURIComponent(slug)}`,
+      `/knowledgebase/${kbId}/wiki/pages/${encodeURIComponent(id)}`,
+      `/knowledgebase/${kbId}/wiki/pages/${encodeURIComponent(slug)}`,
+    ];
+
+    const attempts = [];
+    for (const path of paths) {
+      try {
+        const res = await get(path);
+        attempts.push({ source: path, ok: true, status: 'success' });
+        setPageLoadErrors(attempts);
+        setPageDetail(res?.data || res);
+        setPageLoading(false);
+        return;
+      } catch (err) {
+        attempts.push({ source: path, ok: false, error: err.message });
+      }
     }
+
+    setPageLoadErrors(attempts);
+    setPageError('所有 Wiki 详情接口均无法打开该页面，请确认后端路径。');
+    setPageLoading(false);
   };
 
   const grouped = groupByType(pages);
+
+  const pageContent = pageDetail?.content || pageDetail?.body || pageDetail?.markdown || pageDetail?.text || pageDetail?.html || '';
 
   if (selectedPage) {
     return (
@@ -188,10 +213,27 @@ function WikiView({ kbId }) {
               <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> 加载中…
             </div>
           ) : pageError ? (
-            <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{pageError}</div>
-          ) : pageDetail?.content ? (
+            <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">
+              <p className="font-medium">{pageError}</p>
+              <button
+                onClick={() => setShowPageDebug((s) => !s)}
+                className="mt-2 flex items-center gap-1 text-xs text-gray-600"
+              >
+                <Bug className="h-3 w-3" /> {showPageDebug ? '隐藏调试' : '显示调试'}
+              </button>
+              {showPageDebug && pageLoadErrors.length > 0 && (
+                <div className="mt-2 rounded-lg bg-gray-900 p-2 text-xs text-gray-100">
+                  {pageLoadErrors.map((a, i) => (
+                    <div key={i} className={a.ok ? 'text-green-400' : 'text-red-400'}>
+                      {a.ok ? '✓' : '✗'} {a.source}: {a.ok ? a.status : a.error}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : pageContent ? (
             <div className="prose prose-sm max-w-none text-sm text-gray-700">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{pageDetail.content}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{pageContent}</ReactMarkdown>
             </div>
           ) : (
             <div className="py-8 text-center text-sm text-gray-400">暂无内容</div>
