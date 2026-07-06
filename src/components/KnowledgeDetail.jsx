@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
 import { Knowledge } from '../api/endpoints.js';
+import { get } from '../api/client.js';
 import { Loader2, AlertCircle, Trash2, RefreshCw, XCircle, Save, ArrowLeft } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -16,6 +17,8 @@ function KnowledgeDetail() {
   const [preview, setPreview] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState(null);
+  const [previewDebug, setPreviewDebug] = useState([]);
+  const [showPreviewDebug, setShowPreviewDebug] = useState(false);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -27,25 +30,58 @@ function KnowledgeDetail() {
     if (knowledge) {
       setTitle(knowledge.title || '');
       setDescription(knowledge.description || '');
-      if (knowledge.type === 'manual') {
-        loadPreview();
-      }
+      loadPreview();
     }
   }, [knowledge]);
 
   const loadPreview = async () => {
     setPreviewLoading(true);
     setPreviewError(null);
+    setPreviewDebug([]);
+    const attempts = [];
+
     try {
       const res = await Knowledge.preview(id);
+      attempts.push({ source: 'GET /knowledge/{id}/preview (text)', ok: true, status: 'success' });
+      setPreviewDebug(attempts);
       const text = typeof res === 'string' ? res : JSON.stringify(res, null, 2);
       setPreview(text);
       if (knowledge?.type === 'manual') setContent(text);
-    } catch (err) {
-      setPreviewError(err.message || '预览失败');
-    } finally {
       setPreviewLoading(false);
+      return;
+    } catch (err) {
+      attempts.push({ source: 'GET /knowledge/{id}/preview (text)', ok: false, error: err.message });
     }
+
+    try {
+      const res = await get(`/knowledge/${id}/preview`);
+      attempts.push({ source: 'GET /knowledge/{id}/preview (json)', ok: true, status: 'success' });
+      setPreviewDebug(attempts);
+      const text = extractPreviewText(res);
+      setPreview(text);
+      if (knowledge?.type === 'manual') setContent(text);
+      setPreviewLoading(false);
+      return;
+    } catch (err) {
+      attempts.push({ source: 'GET /knowledge/{id}/preview (json)', ok: false, error: err.message });
+    }
+
+    try {
+      const res = await get(`/knowledge/${id}`);
+      attempts.push({ source: 'GET /knowledge/{id}', ok: true, status: 'success' });
+      setPreviewDebug(attempts);
+      const text = extractPreviewText(res?.data || res);
+      setPreview(text);
+      if (knowledge?.type === 'manual') setContent(text);
+      setPreviewLoading(false);
+      return;
+    } catch (err) {
+      attempts.push({ source: 'GET /knowledge/{id}', ok: false, error: err.message });
+    }
+
+    setPreviewDebug(attempts);
+    setPreviewError('无法加载预览，所有接口均失败。');
+    setPreviewLoading(false);
   };
 
   const handleSave = async () => {
@@ -209,18 +245,31 @@ function KnowledgeDetail() {
           <div className="rounded-2xl bg-white p-4 shadow-sm">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="font-semibold text-gray-900">预览</h3>
-              {knowledge.type !== 'manual' && (
-                <button onClick={loadPreview} className="text-xs text-blue-600">
-                  刷新
-                </button>
-              )}
+              <button onClick={loadPreview} className="text-xs text-blue-600">刷新</button>
             </div>
             {previewLoading ? (
               <div className="py-8 text-center text-sm text-gray-500">
                 <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> 加载预览…
               </div>
             ) : previewError ? (
-              <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{previewError}</div>
+              <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">
+                <p>{previewError}</p>
+                <button
+                  onClick={() => setShowPreviewDebug((s) => !s)}
+                  className="mt-2 text-xs text-gray-600"
+                >
+                  {showPreviewDebug ? '隐藏调试' : '显示调试'}
+                </button>
+                {showPreviewDebug && (
+                  <div className="mt-2 rounded-lg bg-gray-900 p-2 text-xs text-gray-100">
+                    {previewDebug.map((a, i) => (
+                      <div key={i} className={a.ok ? 'text-green-400' : 'text-red-400'}>
+                        {a.ok ? '✓' : '✗'} {a.source}: {a.ok ? a.status : a.error}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             ) : preview ? (
               <div className="prose prose-sm max-w-none text-sm text-gray-700">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{preview}</ReactMarkdown>
@@ -240,6 +289,16 @@ function KnowledgeDetail() {
       )}
     </div>
   );
+}
+
+function extractPreviewText(data) {
+  if (!data) return '';
+  if (typeof data === 'string') return data;
+  const candidates = [data.preview, data.content, data.text, data.body, data.markdown, data.html];
+  for (const c of candidates) {
+    if (typeof c === 'string') return c;
+  }
+  return JSON.stringify(data, null, 2);
 }
 
 export default KnowledgeDetail;
