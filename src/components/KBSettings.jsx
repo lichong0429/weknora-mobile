@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAsync } from '../hooks/useApi.js';
 import { KB, Model } from '../api/endpoints.js';
 import { extractList } from '../utils/list.js';
@@ -87,8 +87,14 @@ function KBSettings({ kb, onUpdated }) {
 
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
+  const justSavedRef = useRef(false);
 
   useEffect(() => {
+    // 保存成功后跳过一次 kb 变化，避免后端返回旧数据覆盖本地乐观更新
+    if (justSavedRef.current) {
+      justSavedRef.current = false;
+      return;
+    }
     setName(kb.name || '');
     setDescription(kb.description || '');
     setType(kb.type || 'document');
@@ -130,9 +136,12 @@ function KBSettings({ kb, onUpdated }) {
           synthesis_model_id: wikiSynthModelId || undefined
         }
       };
-      await KB.update(kb.id, body);
+      const res = await KB.update(kb.id, body);
+      justSavedRef.current = true;
+      // 如果后端返回了更新后的知识库，直接使用；否则用本地乐观更新
+      const updatedKb = res?.data || { ...kb, ...body };
       setMessage({ type: 'success', text: '保存成功' });
-      onUpdated();
+      onUpdated?.(updatedKb);
     } catch (err) {
       setMessage({ type: 'error', text: err.message || '保存失败' });
     } finally {
