@@ -244,3 +244,26 @@ export PATH="$JAVA_HOME/bin:$PATH"
 ### 产物
 - 重新构建 `weknora-mobile-webview.apk`（4.7 MB），版本号 1.0.5，已签名。
 - 通过 GitHub REST API 推送源码、创建 Release v1.0.5 并上传 APK。
+
+---
+
+## 14. v1.0.6：进一步修复 Wiki 页面仍显示为 0
+
+### 问题
+- v1.0.5 修改 Wiki 路径后，用户反馈 Wiki 仍显示「页面 0、链接 0、问题 0」，看不到网页端已有的 Wiki 内容。
+
+### 根因排查
+- 用户自部署的 WeKnora 后端 Wiki 页面列表接口可能不是 `/knowledge-bases/{id}/wiki/pages`，而是 `/knowledge-bases/{id}/wiki/index` 或 `/knowledge-bases/{id}/wiki`。
+- 也可能返回结构不是 `{data: [...]}`, `{data: {pages: [...]}}`，而是 `{items: [...]}`、`{results: [...]}` 等。
+- `stats` 接口失败时会阻塞或显示错误，影响体验。
+
+### 解决
+- 重写 `src/components/WikiView.jsx` 的页面加载逻辑：依次尝试 `Wiki.listPages`、`Wiki.getIndex`、直接 `GET /knowledge-bases/{id}/wiki`、legacy `/knowledgebase/{id}/wiki/pages`。
+- `extractList` 增强，兼容 `pages/items/results/records/list/data` 等字段。
+- `stats` 请求失败时不阻塞列表，仅按 0 展示。
+- 新增「显示调试信息」折叠面板，列出每个 fallback 接口的尝试结果，方便用户定位后端实际路径。
+- 页面打开失败时 fallback 到用 `id` 请求，兼容 slug/id 两种标识。
+
+### 产物
+- 重新构建 `weknora-mobile-webview.apk`（4.7 MB），版本号 1.0.6，已签名。
+- 通过 GitHub Contents API 推送源码、创建 Release v1.0.6 并上传 APK。
