@@ -158,15 +158,19 @@ function WikiView({ kbId }) {
     if (node) observerRef.current.observe(node);
   }, [listLoading, loadingMore, loadMore]);
 
-  // 根据 slug / id / title 在已加载页面中查找匹配项
+  // 根据 slug / id / title 在已加载页面中查找匹配项（支持层级 slug 末段互匹配）
   const findPageByRef = useCallback((ref) => {
     if (!ref) return null;
     const norm = (s) => String(s || '').toLowerCase().trim();
     const r = norm(ref);
+    const rSeg = r.split('/').pop(); // 末段，如 entity/apple -> apple
+    const matchVal = (val) => {
+      const v = norm(val);
+      if (!v) return false;
+      return v === r || v.split('/').pop() === rSeg;
+    };
     return pages.find((p) =>
-      p.slug === ref || p.id === ref ||
-      (p.slug && norm(p.slug) === r) ||
-      (p.id && norm(p.id) === r) ||
+      matchVal(p.slug) || matchVal(p.id) ||
       (p.title && norm(p.title) === r.replace(/-/g, ' '))
     );
   }, [pages]);
@@ -181,6 +185,7 @@ function WikiView({ kbId }) {
     const rawId = page.id || page.page_id || page.slug || '';
     const rawSlug = page.slug || page.id || page.page_id || '';
     const seg = encodeSlugPath(rawId || rawSlug);
+    const lastSeg = String(rawId || rawSlug).split('/').pop(); // 层级 slug 的末段兜底
 
     const pathSets = [
       `/knowledge-bases/${kbId}/wiki/pages/`,
@@ -193,7 +198,7 @@ function WikiView({ kbId }) {
 
     const attempts = [];
     for (const prefix of pathSets) {
-      for (const id of [seg, encodeSlugPath(rawSlug), rawId, rawSlug]) {
+      for (const id of [seg, encodeSlugPath(rawSlug), rawId, rawSlug, encodeSlugPath(lastSeg), lastSeg]) {
         if (!id) continue;
         const path = prefix + id;
         try {
@@ -332,20 +337,46 @@ function WikiView({ kbId }) {
                         rehypePlugins={[rehypeKatex]}
                         components={{
                           a: ({ href, children, ...props }) => {
+                            // 维基内部链接：wiki:slug，做成不导航的可点击元素（HashRouter 下 href="#" 会回首页）
                             if (href && href.startsWith('wiki:')) {
                               const ref = href.slice(5);
                               return (
                                 <a
-                                  href="#"
                                   className="wiki-link"
+                                  role="link"
+                                  tabIndex={0}
                                   onClick={(e) => { e.preventDefault(); openWikiRef(ref); }}
+                                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openWikiRef(ref); } }}
                                 >{children}</a>
                               );
                             }
+                            // 外部链接：新标签打开，阻止在 WebView 内跳转
                             if (href && /^https?:\/\//i.test(href)) {
-                              return <a href={href} target="_blank" rel="noreferrer" {...props}>{children}</a>;
+                              return (
+                                <a
+                                  href={href}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="wiki-link"
+                                  onClick={(e) => e.preventDefault()}
+                                >{children}</a>
+                              );
                             }
-                            return <a href={href} {...props}>{children}</a>;
+                            // 其它内部相对链接：尝试按 wiki slug 在应用内打开，不做原生导航
+                            return (
+                              <a
+                                className="wiki-link"
+                                role="link"
+                                tabIndex={0}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  let seg = String(href || '').split('/wiki/').pop() || '';
+                                  seg = seg.split('?')[0].split('#')[0].replace(/^\/+|\/+$/g, '');
+                                  if (seg) openWikiRef(decodeURIComponent(seg));
+                                }}
+                                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.preventDefault(); }}
+                              >{children}</a>
+                            );
                           }
                         }}
                       >{mdSource}</ReactMarkdown>
