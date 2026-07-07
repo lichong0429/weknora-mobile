@@ -407,3 +407,27 @@ export PATH="$JAVA_HOME/bin:$PATH"
 ### 产物
 - 重新构建 `weknora-mobile-webview.apk`（版本 1.0.12），已签名。
 - 通过 GitHub Contents API 推送源码、创建 Release v1.0.12 并上传 APK。
+
+---
+
+## v1.0.13（2026-07-07）— Wiki 链接点击跳回首页修复
+
+### 问题
+- 用户在 v1.0.12 反馈：Wiki 正文里的链接能显示了，但点击会跳转到 App 首页，无法正确跳转到目标页面。
+
+### 根因
+- WebView 入口（`main-webview.jsx`）使用的是 **HashRouter**。v1.0.12 把维基链接渲染成 `<a href="#">`，在 HashRouter 下点击 `href="#"` 会让路由回退到 `#`（根路由 `/`），页面跳回 App 首页。
+- 隐藏问题：`findPageByRef` 对层级 slug（如 `entity/apple`）只做精确匹配，而页面列表里常只存末段 `apple`，导致即使点中链接也常走 API 兜底且路径对不上。
+
+### 解决
+- `WikiView.jsx` 自定义 `a` 组件：
+  - `wiki:` 内部链接改为**无 `href`** 的可点击元素（`role="link"` + `tabIndex` + `onClick`），从根上杜绝 HashRouter 下 `href="#"` 跳首页。
+  - 外部链接：新标签打开并 `preventDefault`，不在 WebView 内导航。
+  - 其它内部相对链接：拦截默认行为，尝试按 wiki slug 在应用内打开。
+- `findPageByRef` 放宽匹配：支持层级 slug 末段互匹配（`entity/apple` ⇄ `apple`）。
+- `handleOpenPage` 详情接口兜底增加「末段 slug」尝试，提升层级 slug 命中率。
+- `webview-app/app/build.gradle` 版本号升到 `versionCode 13 / versionName "1.0.13"`。
+
+### 产物
+- 重新构建 `weknora-mobile-webview.apk`（版本 1.0.13），已签名。
+- 通过 GitHub Contents API 推送源码、创建 Release v1.0.13 并上传 APK。
