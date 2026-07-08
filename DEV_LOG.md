@@ -431,3 +431,27 @@ export PATH="$JAVA_HOME/bin:$PATH"
 ### 产物
 - 重新构建 `weknora-mobile-webview.apk`（版本 1.0.13），已签名。
 - 通过 GitHub Contents API 推送源码、创建 Release v1.0.13 并上传 APK。
+
+---
+
+## v1.0.14 — 修复 Wiki 正文内链接无法跳转
+
+### 问题
+- 用户反馈：v1.0.13 中 Wiki **底部**的「本页链接 / 反向链接」可正常跳转，但**正文**里的维基链接点击无反应、不能跳转。
+
+### 根因
+- 正文 MD 渲染路径依赖 ReactMarkdown 的 `components.a` 自定义渲染返回一个**无 `href` 的 `<a>` 元素**；而在移动端 WebView 中，没有 `href` 的 `<a>` 经常不触发点击事件，导致 MD 正文里的维基链接点了没反应。
+- 同时，容器级事件委托 `handleContentClick` 只挂在了 HTML 渲染路径（`isHtml` 为 true）上，MD 路径没有兜底；MD 正文里的链接因此既没正常工作也没兜底。
+- HTML 渲染路径此前未对 `[[slug|Title]]` 维基语法做预处理，若后端直接返回含 `[[...]]` 的 HTML，也不会变成可点击链接。
+
+### 解决
+- 统一改为**容器级事件委托**：正文容器（无论 MD 还是 HTML）都挂 `onClick={handleContentClick}`，由它统一拦截所有 `.wiki-link` / `a` 的点击。
+- ReactMarkdown 的 `components.a` 不再自己在元素上挂 `onClick`，而是渲染为 **`<span class="wiki-link" data-wiki-ref="slug" role="link" tabIndex={0}>`**（无 `href`、无 onClick），点击事件冒泡到容器由委托处理。外部链接仍保留 `<a href target="_blank">` 放行原生跳转。
+- 新增 `preprocessWikiLinksHtml()`：在 HTML 渲染前把 `[[slug|Title]]` 转成 `<a class="wiki-link" data-wiki-ref="slug">Title</a>`，使 HTML 正文里的维基语法也能被事件委托捕获。
+- `handleContentClick` 重写：优先读 `data-wiki-ref` / `data-wiki-href`，其次 `href` 的 `wiki:` 协议与 `/wiki/` 路径，外部 http(s) 放行；层级 slug 末段匹配由 `findPageByRef` 兜底。
+- `index.css` 给 `.wiki-link`（含 span 与 a）补充 `cursor:pointer; touch-action:manipulation; user-select:none; -webkit-tap-highlight-color`，确保移动端可点且有点击态。
+- `webview-app/app/build.gradle` 版本号升到 `versionCode 14 / versionName "1.0.14"`。
+
+### 产物
+- 重新构建 `weknora-mobile-webview.apk`（版本 1.0.14），已签名。
+- 通过 GitHub Contents API 推送源码、创建 Release v1.0.14 并上传 APK。

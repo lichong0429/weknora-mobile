@@ -57,14 +57,18 @@ html, body, #root {
 .md-body li > ul, .md-body li > ol { margin: 0.3em 0; }
 .md-body a { color: #2563eb; text-decoration: underline; }
 /* 维基内部链接：可点击跳转 */
-.md-body a.wiki-link {
+.md-body .wiki-link, .md-body a.wiki-link {
   color: #1d4ed8;
   background: #eff6ff;
   border-radius: 4px;
   padding: 0 4px;
   text-decoration: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: rgba(29, 78, 216, 0.15);
+  touch-action: manipulation;
+  user-select: none;
 }
-.md-body a.wiki-link:active { background: #dbeafe; }
+.md-body .wiki-link:active, .md-body a.wiki-link:active { background: #dbeafe; }
 .md-body strong, .md-body b { font-weight: 700; color: #111827; }
 .md-body em, .md-body i { font-style: italic; }
 .md-body code {
