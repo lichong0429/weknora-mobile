@@ -58,16 +58,26 @@ function preprocessWikiLinksHtml(html) {
 // 解析 Wiki 正文中的媒体地址：后端返回的相对路径需要拼接为后端绝对地址，
 // 否则在 PWA / WebView 的 file:// 或独立域名下会 404。
 function getMediaBaseUrl() {
+  const cfg = getConfig();
+  // 优先使用绝对地址（用户设置的后端地址）
+  if (cfg.baseUrl && /^https?:\/\//i.test(cfg.baseUrl)) {
+    return cfg.baseUrl.replace(/\/$/, '');
+  }
   const base = getBaseUrl();
   if (base) return base;
-  // 代理模式下 getBaseUrl() 返回空串，但 config.baseUrl 仍保存真实后端地址
-  const cfg = getConfig();
-  return (cfg.baseUrl || window.location.origin).replace(/\/$/, '');
+  // 代理模式下 getBaseUrl() 返回空串，config.baseUrl 是相对路径或为空
+  if (cfg.baseUrl && typeof cfg.baseUrl === 'string') {
+    const rel = cfg.baseUrl.replace(/\/$/, '');
+    if (rel.startsWith('/')) return `${window.location.origin}${rel}`;
+    return `${window.location.origin}/${rel}`;
+  }
+  return window.location.origin;
 }
 
 function resolveUrl(url) {
   if (!url || typeof url !== 'string') return url;
   url = url.trim();
+  // 绝对地址：http://、https://、//（协议相对）
   if (/^(https?:)?\/\//i.test(url)) return url;
   // 保留 data: / blob: / file: / mailto: 等 scheme，不再拼接 base
   if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return url;
@@ -90,6 +100,17 @@ function resolveMediaUrls(html) {
         if (!parts[0]) return entry;
         return [resolveUrl(parts[0]), ...parts.slice(1)].join(' ');
       }).join(', '));
+    }
+  });
+  // 同时把 HTML 中指向 /wiki/ 或 /knowledge-bases/.../wiki/ 的 <a> 标记为内部链接，
+  // 方便 handleContentClick 统一拦截。
+  doc.querySelectorAll('a[href]').forEach((el) => {
+    const href = el.getAttribute('href') || '';
+    if (/^https?:\/\//i.test(href) || href.startsWith('//')) return;
+    if (/\/(wiki|knowledge-bases\/[^/]+\/wiki)\//i.test(href) || /^wiki:/i.test(href)) {
+      el.setAttribute('data-wiki-href', href);
+      el.classList.add('wiki-link');
+      el.setAttribute('role', 'link');
     }
   });
   return doc.body.innerHTML;
@@ -284,34 +305,44 @@ function WikiView({ kbId }) {
     }
   }, [findPageByRef, handleOpenPage]);
 
+  // 从任意 href 中提取内部 wiki slug：支持 wiki:slug、/wiki/slug、/knowledge-bases/{id}/wiki/pages/slug 等
+  const extractWikiSlug = useCallback((raw) => {
+    if (!raw || typeof raw !== 'string') return '';
+    const href = raw.trim();
+    if (href.startsWith('wiki:')) return href.slice(5).trim();
+    // 去掉 query / hash
+    let path = href.split('?')[0].split('#')[0];
+    // 支持 /knowledge-bases/{kbId}/wiki/pages/{slug} 及其变体
+    const kbWikiMatch = path.match(/\/knowledge-bases\/[^/]+\/wiki\/(?:pages|page)\/(.+)/i);
+    if (kbWikiMatch) return decodeURIComponent(kbWikiMatch[1].replace(/^\/+|\/+$/g, ''));
+    // 支持 /wiki/{slug}
+    const wikiMatch = path.match(/\/wiki\/(.+)/i);
+    if (wikiMatch) return decodeURIComponent(wikiMatch[1].replace(/^\/+|\/+$/g, ''));
+    // 兜底：如果 href 是相对路径且不含 http，把最后一段当 slug 试试
+    if (!/^https?:\/\//i.test(href) && !href.startsWith('//') && path) {
+      return decodeURIComponent(path.split('/').pop().replace(/^\/+|\/+$/g, ''));
+    }
+    return '';
+  }, []);
+
   // 点击 wiki 内容里的链接（正文与详情通用）：统一在容器层做事件委托，
-  // 正文里无论是 ReactMarkdown 渲染的 <span data-wiki-ref> 还是 HTML 里的 <a data-wiki-ref>，都能拦截并应用内跳转
+  // 正文里无论是 ReactMarkdown 渲染的 <button data-wiki-ref> 还是 HTML 里的 <a data-wiki-href>，都能拦截并应用内跳转
   const handleContentClick = useCallback((e) => {
     const el = e.target.closest('.wiki-link, a');
     if (!el) return;
     const wikiRef = el.getAttribute('data-wiki-ref');
     const wikiHref = el.getAttribute('data-wiki-href');
     const href = el.getAttribute('href');
-    if (wikiRef) { e.preventDefault(); openWikiRef(wikiRef); return; }
-    if (wikiHref) {
-      e.preventDefault();
-      let seg = String(wikiHref || '').split('/wiki/').pop() || '';
-      seg = seg.split('?')[0].split('#')[0].replace(/^\/+|\/+$/g, '');
-      if (seg) openWikiRef(decodeURIComponent(seg));
+    if (wikiRef) { e.preventDefault(); e.stopPropagation(); openWikiRef(wikiRef); return; }
+    const target = wikiHref || href;
+    if (!target) return;
+    // 外部 http(s) 链接放行
+    if (/^https?:\/\//i.test(target) && !target.includes('/wiki/') && !target.includes('/knowledge-bases/')) {
       return;
     }
-    if (href && href.startsWith('wiki:')) { e.preventDefault(); openWikiRef(href.slice(5)); return; }
-    if (href) {
-      if (/^https?:\/\//i.test(href)) {
-        // 外部链接：放行原生跳转（由 <a target="_blank"> 处理）
-        return;
-      }
-      e.preventDefault();
-      let seg = href.split('/wiki/').pop();
-      seg = (seg || '').split('?')[0].split('#')[0].replace(/^\/+|\/+$/g, '');
-      if (seg) openWikiRef(decodeURIComponent(seg));
-    }
-  }, [openWikiRef]);
+    const slug = extractWikiSlug(target);
+    if (slug) { e.preventDefault(); e.stopPropagation(); openWikiRef(slug); return; }
+  }, [openWikiRef, extractWikiSlug]);
 
   const grouped = groupByType(pages);
 
