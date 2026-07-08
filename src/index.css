@@ -56,19 +56,26 @@ html, body, #root {
 .md-body li { margin: 0.3em 0; }
 .md-body li > ul, .md-body li > ol { margin: 0.3em 0; }
 .md-body a { color: #2563eb; text-decoration: underline; }
-/* 维基内部链接：可点击跳转 */
-.md-body .wiki-link, .md-body a.wiki-link {
+/* 维基内部链接：可点击跳转（button/span/a 统一） */
+.md-body .wiki-link, .md-body a.wiki-link, .md-body button.wiki-link {
   color: #1d4ed8;
   background: #eff6ff;
+  border: none;
   border-radius: 4px;
   padding: 0 4px;
+  margin: 0;
+  font: inherit;
+  font-size: inherit;
+  line-height: inherit;
   text-decoration: none;
   cursor: pointer;
   -webkit-tap-highlight-color: rgba(29, 78, 216, 0.15);
   touch-action: manipulation;
   user-select: none;
+  -webkit-appearance: none;
+  appearance: none;
 }
-.md-body .wiki-link:active, .md-body a.wiki-link:active { background: #dbeafe; }
+.md-body .wiki-link:active, .md-body a.wiki-link:active, .md-body button.wiki-link:active { background: #dbeafe; }
 .md-body strong, .md-body b { font-weight: 700; color: #111827; }
 .md-body em, .md-body i { font-style: italic; }
 .md-body code {
