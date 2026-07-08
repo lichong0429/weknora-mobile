@@ -455,3 +455,28 @@ export PATH="$JAVA_HOME/bin:$PATH"
 ### 产物
 - 重新构建 `weknora-mobile-webview.apk`（版本 1.0.14），已签名。
 - 通过 GitHub Contents API 推送源码、创建 Release v1.0.14 并上传 APK。
+
+---
+
+## v1.1.1 — 修复 Wiki 正文内链接仍无法跳转 + 版本号升级到 1.1.1
+
+### 问题
+- 用户反馈：v1.0.14 中 Wiki **底部**链接可跳转，但**正文**里的维基链接仍点不动。
+- 用户要求：版本号从 **1.1.1** 开始。
+
+### 根因
+- v1.0.14 虽然把正文链接改成了无 `href` 的 `<span data-wiki-ref>`，并统一用 React 容器事件委托，但移动端 WebView 对这类 `<span>` 的点击事件支持仍不稳定（React 合成事件有时不触发或事件目标不正确）。
+- 缺少原生事件兜底：一旦 React 合成事件没触发，点击就彻底无响应。
+
+### 解决
+- **正文链接元素改用 `<button>`**（按钮在移动端 WebView 中天然可触发点击，且不会触发 HashRouter 导航）：
+  - ReactMarkdown 自定义 `a` 组件：wiki 链接与内部相对链接都渲染为 `<button class="wiki-link" data-wiki-ref/data-wiki-href type="button" role="link">`。
+  - HTML 预处理 `preprocessWikiLinksHtml()` 也把 `[[slug|Title]]` 转成 `<button class="wiki-link" data-wiki-ref="slug" type="button">Title</button>`。
+- **增加原生捕获阶段事件监听兜底**：通过 `useEffect` 在 `.md-body` 容器上挂载 `addEventListener('click', handler, true)`，即使 React 合成事件不触发，原生事件也能拦截 `.wiki-link`/`<a>` 点击并完成应用内跳转。
+- 移除容器上的 React `onClick={handleContentClick}`，避免与原生捕获监听重复触发；由原生监听统一处理。
+- `index.css` 重置 `<button class="wiki-link">` 的默认边框/背景/外观，并保留与 span/a 一致的链接样式、点击态、tap-highlight。
+- `webview-app/app/build.gradle` 版本号升到 `versionCode 15 / versionName "1.1.1"`。
+
+### 产物
+- 重新构建 `weknora-mobile-webview.apk`（版本 1.1.1），已签名。
+- 通过 GitHub Contents API 推送源码、创建 Release v1.1.1 并上传 APK。
