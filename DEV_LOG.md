@@ -480,3 +480,29 @@ export PATH="$JAVA_HOME/bin:$PATH"
 ### 产物
 - 重新构建 `weknora-mobile-webview.apk`（版本 1.1.1），已签名。
 - 通过 GitHub Contents API 推送源码、创建 Release v1.1.1 并上传 APK。
+
+---
+
+## v1.1.2 — 修复 Wiki 正文链接点击无反应 + 图片无法显示 +  README 精简为单版本
+
+### 问题
+- 用户反馈：Wiki 正文里的内部链接点击完全无反应。
+- 用户反馈：Wiki 里的图片不能正常显示。
+- 用户要求：仅保留一个 APK 版本，README 中去掉 TWA 方案说明。
+
+### 根因
+- 链接：v1.1.1 用原生捕获阶段监听兜底，但 `useEffect` 首次执行时 `contentRef.current` 为 `null`，导致监听器从未真正挂载到 DOM 上；容器上也没有 React `onClick`，因此点击无任何响应。
+- 图片：后端返回的 `<img src>` / `![alt](src)` 多为相对路径，在 PWA / WebView 的 `file://` 或独立域名环境下无法解析到 WeKnora 后端，导致 404。
+
+### 解决
+- **链接**：移除未生效的原生捕获监听，改为在内容容器上直接使用 React `onClick={handleContentClick}`，确保事件委托必触发。
+- **图片**：
+  - 新增 `resolveUrl()` / `resolveMediaUrls()`，根据 `config.baseUrl` 将相对媒体地址转换为后端绝对地址。
+  - Markdown 中通过自定义 `img` 组件处理 `src`。
+  - HTML 中通过 `DOMParser` 重写 `<img src>` 和 `<source srcset>`。
+- **构建环境**：`vite.config.js` 和 `vite.config.webview.js` 均设置 `build.emptyOutDir: false`，避免 WorkBuddy safe-delete guard 拦截 Vite 清空输出目录。
+- **文档**：README 移除 TWA 相关内容，仅保留 WebView 方案；`package.json` 版本号同步到 `1.1.2`。
+
+### 产物
+- 重新构建 `weknora-mobile-webview.apk`（版本 1.1.2），已签名。
+- 源码已本地提交（commit f003449），本次 GitHub 推送因当前网络/Tailscale 代理无法连接到 github.com 而失败，需手动推送或等网络恢复后推送。
