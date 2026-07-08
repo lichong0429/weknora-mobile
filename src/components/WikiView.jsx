@@ -42,15 +42,15 @@ function preprocessWikiLinks(text) {
   });
 }
 
-// 将 HTML 正文里的 [[slug|Title]] 维基语法转换为可点击的 <a class="wiki-link" data-wiki-ref>
-// 这样事件委托（handleContentClick）也能在 dangerouslySetInnerHTML 渲染的 HTML 里生效
+// 将 HTML 正文里的 [[slug|Title]] 维基语法转换为可点击的 <button class="wiki-link" data-wiki-ref>
+// 按钮在移动端 WebView 中一定能触发点击事件，且不会触发 HashRouter 导航
 function preprocessWikiLinksHtml(html) {
   if (typeof html !== 'string') return '';
   return html.replace(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g, (m, slug, title) => {
     const s = String(slug).trim().replace(/"/g, '&quot;');
     const t = (title && title.trim()) || String(slug).trim();
     if (!s) return m;
-    return `<a class="wiki-link" data-wiki-ref="${s}">${t}</a>`;
+    return `<button class="wiki-link" data-wiki-ref="${s}" type="button">${t}</button>`;
   });
 }
 
@@ -74,6 +74,7 @@ function WikiView({ kbId }) {
   const [pageLoadErrors, setPageLoadErrors] = useState([]);
   const [showPageDebug, setShowPageDebug] = useState(false);
   const observerRef = useRef();
+  const contentRef = useRef(null);
 
   const { data: statsRes, loading: statsLoading } = useAsync(
     () => Wiki.getStats(kbId).catch(() => null),
@@ -272,6 +273,16 @@ function WikiView({ kbId }) {
     }
   }, [openWikiRef]);
 
+  // 用原生捕获阶段事件监听兜底：即使 React 合成事件在移动端 WebView 里不触发，
+  // 点击 .wiki-link 或 <a> 时原生 listener 也能拦截并完成应用内跳转
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    const onClick = (e) => handleContentClick(e);
+    el.addEventListener('click', onClick, true);
+    return () => el.removeEventListener('click', onClick, true);
+  }, [handleContentClick]);
+
   const grouped = groupByType(pages);
 
   const pageContent = pageDetail?.content || pageDetail?.body || pageDetail?.markdown || pageDetail?.text || pageDetail?.html || '';
@@ -347,8 +358,8 @@ function WikiView({ kbId }) {
               ) : pageContent ? (
                 <>
                   <div
+                    ref={contentRef}
                     className="md-body"
-                    onClick={handleContentClick}
                   >
                     {isHtml ? (
                       <div dangerouslySetInnerHTML={{ __html: cleanHtml(preprocessWikiLinksHtml(pageContent)) }} />
@@ -358,16 +369,16 @@ function WikiView({ kbId }) {
                         rehypePlugins={[rehypeKatex]}
                         components={{
                           a: ({ href, children }) => {
-                            // 维基内部链接：wiki:slug -> 无 href 的可点击 span，由容器层事件委托做应用内跳转
+                            // 维基内部链接：wiki:slug -> 可点击 button，由原生捕获事件做应用内跳转
                             if (href && href.startsWith('wiki:')) {
                               const ref = href.slice(5);
                               return (
-                                <span
+                                <button
                                   className="wiki-link"
                                   data-wiki-ref={ref}
+                                  type="button"
                                   role="link"
-                                  tabIndex={0}
-                                >{children}</span>
+                                >{children}</button>
                               );
                             }
                             // 外部链接：保留原生跳转（新标签打开）
@@ -378,12 +389,12 @@ function WikiView({ kbId }) {
                             }
                             // 其它内部相对链接：data-wiki-href 交给事件委托处理
                             return (
-                              <span
+                              <button
                                 className="wiki-link"
                                 data-wiki-href={href || ''}
+                                type="button"
                                 role="link"
-                                tabIndex={0}
-                              >{children}</span>
+                              >{children}</button>
                             );
                           }
                         }}
