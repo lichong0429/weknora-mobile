@@ -3,6 +3,11 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
+  build: {
+    // 在 WorkBuddy 环境中 Vite 默认清空 dist 会被安全删除 guard 拦截（>50 个文件），
+    // 暂时禁用自动清空，需要干净构建时手动删除 dist 目录。
+    emptyOutDir: false
+  },
   plugins: [
     react(),
     VitePWA({

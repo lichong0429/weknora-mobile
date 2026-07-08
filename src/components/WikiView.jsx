@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
 import { Wiki } from '../api/endpoints.js';
 import { get } from '../api/client.js';
+import { getBaseUrl, getConfig } from '../config.js';
 import {
   BookOpen, Search, Loader2, AlertCircle, FileText, Folder, ChevronRight,
   BarChart3, LayoutGrid, List, ArrowLeft, Bug, Link2
@@ -54,6 +55,46 @@ function preprocessWikiLinksHtml(html) {
   });
 }
 
+// 解析 Wiki 正文中的媒体地址：后端返回的相对路径需要拼接为后端绝对地址，
+// 否则在 PWA / WebView 的 file:// 或独立域名下会 404。
+function getMediaBaseUrl() {
+  const base = getBaseUrl();
+  if (base) return base;
+  // 代理模式下 getBaseUrl() 返回空串，但 config.baseUrl 仍保存真实后端地址
+  const cfg = getConfig();
+  return (cfg.baseUrl || window.location.origin).replace(/\/$/, '');
+}
+
+function resolveUrl(url) {
+  if (!url || typeof url !== 'string') return url;
+  url = url.trim();
+  if (/^(https?:)?\/\//i.test(url)) return url;
+  // 保留 data: / blob: / file: / mailto: 等 scheme，不再拼接 base
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return url;
+  const base = getMediaBaseUrl();
+  if (url.startsWith('/')) return `${base}${url}`;
+  return `${base}/${url}`;
+}
+
+function resolveMediaUrls(html) {
+  if (!html || typeof html !== 'string') return html;
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  doc.querySelectorAll('img[src], source[srcset]').forEach((el) => {
+    const src = el.getAttribute('src');
+    if (src) el.setAttribute('src', resolveUrl(src));
+    const srcset = el.getAttribute('srcset');
+    if (srcset) {
+      el.setAttribute('srcset', srcset.split(',').map((entry) => {
+        const parts = entry.trim().split(/\s+/);
+        if (!parts[0]) return entry;
+        return [resolveUrl(parts[0]), ...parts.slice(1)].join(' ');
+      }).join(', '));
+    }
+  });
+  return doc.body.innerHTML;
+}
+
 function WikiView({ kbId }) {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
@@ -74,7 +115,6 @@ function WikiView({ kbId }) {
   const [pageLoadErrors, setPageLoadErrors] = useState([]);
   const [showPageDebug, setShowPageDebug] = useState(false);
   const observerRef = useRef();
-  const contentRef = useRef(null);
 
   const { data: statsRes, loading: statsLoading } = useAsync(
     () => Wiki.getStats(kbId).catch(() => null),
@@ -273,16 +313,6 @@ function WikiView({ kbId }) {
     }
   }, [openWikiRef]);
 
-  // 用原生捕获阶段事件监听兜底：即使 React 合成事件在移动端 WebView 里不触发，
-  // 点击 .wiki-link 或 <a> 时原生 listener 也能拦截并完成应用内跳转
-  useEffect(() => {
-    const el = contentRef.current;
-    if (!el) return;
-    const onClick = (e) => handleContentClick(e);
-    el.addEventListener('click', onClick, true);
-    return () => el.removeEventListener('click', onClick, true);
-  }, [handleContentClick]);
-
   const grouped = groupByType(pages);
 
   const pageContent = pageDetail?.content || pageDetail?.body || pageDetail?.markdown || pageDetail?.text || pageDetail?.html || '';
@@ -358,11 +388,11 @@ function WikiView({ kbId }) {
               ) : pageContent ? (
                 <>
                   <div
-                    ref={contentRef}
                     className="md-body"
+                    onClick={handleContentClick}
                   >
                     {isHtml ? (
-                      <div dangerouslySetInnerHTML={{ __html: cleanHtml(preprocessWikiLinksHtml(pageContent)) }} />
+                      <div dangerouslySetInnerHTML={{ __html: cleanHtml(resolveMediaUrls(preprocessWikiLinksHtml(pageContent))) }} />
                     ) : (
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm, remarkMath]}
@@ -396,7 +426,16 @@ function WikiView({ kbId }) {
                                 role="link"
                               >{children}</button>
                             );
-                          }
+                          },
+                          img: ({ src, alt, title }) => (
+                            <img
+                              src={resolveUrl(src)}
+                              alt={alt || ''}
+                              title={title}
+                              loading="lazy"
+                              className="max-w-full rounded-lg"
+                            />
+                          )
                         }}
                       >{mdSource}</ReactMarkdown>
                     )}

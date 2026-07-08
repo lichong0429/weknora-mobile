@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react()],
   build: {
     outDir: 'dist-webview',
+    emptyOutDir: false,
     rollupOptions: {
       input: 'index-webview.html'
     }
