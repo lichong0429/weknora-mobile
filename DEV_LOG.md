@@ -505,4 +505,9 @@ export PATH="$JAVA_HOME/bin:$PATH"
 
 ### 产物
 - 重新构建 `weknora-mobile-webview.apk`（版本 1.1.2），已签名。
-- 源码已本地提交（commit f003449），本次 GitHub 推送因当前网络/Tailscale 代理无法连接到 github.com 而失败，需手动推送或等网络恢复后推送。
+- 源码已推送至 GitHub，Release v1.1.2 已发布并上传 APK。
+
+### 补充（2026-07-09）
+- 发现 Android `versionCode` 仍为 `15`、`versionName` 仍为 `1.1.1`，导致系统设置里显示旧版本；Diagnostics 页面硬编码版本号为 `v2.1.0-20260704`。
+- 修复：`webview-app/app/build.gradle` 更新为 `versionCode 16 / versionName "1.1.2"`；`src/components/Diagnostics.jsx` 的 `APP_VERSION` 同步为 `v1.1.2`。
+- 重新构建、签名并替换 GitHub Release 中的 APK asset。
