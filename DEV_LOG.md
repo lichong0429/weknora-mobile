@@ -2,7 +2,7 @@
 
 > 记录项目从需求提出到当前暂停状态的主要开发过程、技术决策与问题排查。
 >
-> 最后更新：2026-07-05
+> 最后更新：2026-07-09
 
 ---
 
@@ -480,6 +480,35 @@ export PATH="$JAVA_HOME/bin:$PATH"
 ### 产物
 - 重新构建 `weknora-mobile-webview.apk`（版本 1.1.1），已签名。
 - 通过 GitHub Contents API 推送源码、创建 Release v1.1.1 并上传 APK。
+
+---
+
+## v1.1.3 — 修复 Wiki 链接/图片解析，统一版本号到 1.1.3
+
+### 问题
+- 用户反馈：安装的 APK 仍显示版本 1.1.1，且 Wiki 内部链接无反应、图片不显示。
+- 用户指出：每次更新都应递增版本号，否则无法区分新旧 APK，Release 的“更新日期”也显得不对。
+
+### 根因
+- 第一轮修复只改了 `package.json`，未同步修改 Android `build.gradle` 的 `versionCode`/`versionName` 以及 `Diagnostics.jsx` 的 `APP_VERSION`，导致系统设置与诊断页显示旧版本。
+- 第二轮修复继续覆盖同一个 `v1.1.2` tag/asset，没有创建新的 Release，用户看到的是旧的创建/更新日期。
+- 后端 Wiki 链接格式多样（`/wiki/slug`、`/knowledge-bases/{id}/wiki/pages/{slug}`），图片路径可能为相对路径，在 WebView 的 `file://` 环境下会 404。
+
+### 解决
+- 版本号全项目统一提升到 **1.1.3**：
+  - `package.json`：`1.1.2` → `1.1.3`
+  - `webview-app/app/build.gradle`：`versionCode 16` → `17`，`versionName "1.1.2"` → `"1.1.3"`
+  - `src/components/Diagnostics.jsx`：`APP_VERSION` 改为 `v1.1.3`，提示文案同步更新。
+- 强化 Wiki 链接与图片解析（`src/components/WikiView.jsx`）：
+  - `getMediaBaseUrl()` 优先使用用户设置的绝对 `cfg.baseUrl`，正确处理代理/相对路径。
+  - `resolveMediaUrls()` 把 HTML 中的 `<img src>`、`<source srcset>` 及指向 `/wiki/` 或 `/knowledge-bases/.../wiki/` 的 `<a>` 统一解析为内部链接/绝对地址。
+  - `handleContentClick()` 支持 `wiki:slug`、`/wiki/slug`、`/knowledge-bases/{id}/wiki/pages/{slug}` 等多种格式，并阻止事件冒泡。
+- 新建 GitHub Release **v1.1.3** 并上传新 APK，不再覆盖旧版 v1.1.2。
+
+### 产物
+- 重新构建并签名 `weknora-mobile-webview.apk`（版本 1.1.3）。
+- 源码推送至 GitHub `main`。
+- GitHub Release v1.1.3 发布并上传 APK asset。
 
 ---
 
