@@ -42,6 +42,18 @@ function preprocessWikiLinks(text) {
   });
 }
 
+// 将 HTML 正文里的 [[slug|Title]] 维基语法转换为可点击的 <a class="wiki-link" data-wiki-ref>
+// 这样事件委托（handleContentClick）也能在 dangerouslySetInnerHTML 渲染的 HTML 里生效
+function preprocessWikiLinksHtml(html) {
+  if (typeof html !== 'string') return '';
+  return html.replace(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g, (m, slug, title) => {
+    const s = String(slug).trim().replace(/"/g, '&quot;');
+    const t = (title && title.trim()) || String(slug).trim();
+    if (!s) return m;
+    return `<a class="wiki-link" data-wiki-ref="${s}">${t}</a>`;
+  });
+}
+
 function WikiView({ kbId }) {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
@@ -231,23 +243,32 @@ function WikiView({ kbId }) {
     }
   }, [findPageByRef, handleOpenPage]);
 
-  // 点击 wiki 内容里的 <a>（HTML 渲染路径）时拦截内部跳转
+  // 点击 wiki 内容里的链接（正文与详情通用）：统一在容器层做事件委托，
+  // 正文里无论是 ReactMarkdown 渲染的 <span data-wiki-ref> 还是 HTML 里的 <a data-wiki-ref>，都能拦截并应用内跳转
   const handleContentClick = useCallback((e) => {
-    const a = e.target.closest('a');
-    if (!a) return;
-    const href = a.getAttribute('href');
-    if (!href) return;
-    e.preventDefault();
-    if (href.startsWith('wiki:')) {
-      openWikiRef(href.slice(5));
+    const el = e.target.closest('.wiki-link, a');
+    if (!el) return;
+    const wikiRef = el.getAttribute('data-wiki-ref');
+    const wikiHref = el.getAttribute('data-wiki-href');
+    const href = el.getAttribute('href');
+    if (wikiRef) { e.preventDefault(); openWikiRef(wikiRef); return; }
+    if (wikiHref) {
+      e.preventDefault();
+      let seg = String(wikiHref || '').split('/wiki/').pop() || '';
+      seg = seg.split('?')[0].split('#')[0].replace(/^\/+|\/+$/g, '');
+      if (seg) openWikiRef(decodeURIComponent(seg));
       return;
     }
-    // 提取 /wiki/ 之后的最后一段作为 slug
-    let seg = href.split('/wiki/').pop();
-    seg = (seg || '').split('?')[0].split('#')[0].replace(/^\/+|\/+$/g, '');
-    if (seg) openWikiRef(decodeURIComponent(seg));
-    else if (/^https?:\/\//i.test(href)) {
-      try { window.open(href, '_blank'); } catch {}
+    if (href && href.startsWith('wiki:')) { e.preventDefault(); openWikiRef(href.slice(5)); return; }
+    if (href) {
+      if (/^https?:\/\//i.test(href)) {
+        // 外部链接：放行原生跳转（由 <a target="_blank"> 处理）
+        return;
+      }
+      e.preventDefault();
+      let seg = href.split('/wiki/').pop();
+      seg = (seg || '').split('?')[0].split('#')[0].replace(/^\/+|\/+$/g, '');
+      if (seg) openWikiRef(decodeURIComponent(seg));
     }
   }, [openWikiRef]);
 
@@ -327,55 +348,42 @@ function WikiView({ kbId }) {
                 <>
                   <div
                     className="md-body"
-                    onClick={isHtml ? handleContentClick : undefined}
+                    onClick={handleContentClick}
                   >
                     {isHtml ? (
-                      <div dangerouslySetInnerHTML={{ __html: cleanHtml(pageContent) }} />
+                      <div dangerouslySetInnerHTML={{ __html: cleanHtml(preprocessWikiLinksHtml(pageContent)) }} />
                     ) : (
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm, remarkMath]}
                         rehypePlugins={[rehypeKatex]}
                         components={{
-                          a: ({ href, children, ...props }) => {
-                            // 维基内部链接：wiki:slug，做成不导航的可点击元素（HashRouter 下 href="#" 会回首页）
+                          a: ({ href, children }) => {
+                            // 维基内部链接：wiki:slug -> 无 href 的可点击 span，由容器层事件委托做应用内跳转
                             if (href && href.startsWith('wiki:')) {
                               const ref = href.slice(5);
                               return (
-                                <a
+                                <span
                                   className="wiki-link"
+                                  data-wiki-ref={ref}
                                   role="link"
                                   tabIndex={0}
-                                  onClick={(e) => { e.preventDefault(); openWikiRef(ref); }}
-                                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openWikiRef(ref); } }}
-                                >{children}</a>
+                                >{children}</span>
                               );
                             }
-                            // 外部链接：新标签打开，阻止在 WebView 内跳转
+                            // 外部链接：保留原生跳转（新标签打开）
                             if (href && /^https?:\/\//i.test(href)) {
                               return (
-                                <a
-                                  href={href}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="wiki-link"
-                                  onClick={(e) => e.preventDefault()}
-                                >{children}</a>
+                                <a href={href} target="_blank" rel="noreferrer" className="wiki-link">{children}</a>
                               );
                             }
-                            // 其它内部相对链接：尝试按 wiki slug 在应用内打开，不做原生导航
+                            // 其它内部相对链接：data-wiki-href 交给事件委托处理
                             return (
-                              <a
+                              <span
                                 className="wiki-link"
+                                data-wiki-href={href || ''}
                                 role="link"
                                 tabIndex={0}
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  let seg = String(href || '').split('/wiki/').pop() || '';
-                                  seg = seg.split('?')[0].split('#')[0].replace(/^\/+|\/+$/g, '');
-                                  if (seg) openWikiRef(decodeURIComponent(seg));
-                                }}
-                                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.preventDefault(); }}
-                              >{children}</a>
+                              >{children}</span>
                             );
                           }
                         }}
