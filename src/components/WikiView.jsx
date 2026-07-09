@@ -104,10 +104,14 @@ function resolveMediaUrls(html) {
   });
   // 同时把 HTML 中指向 /wiki/ 或 /knowledge-bases/.../wiki/ 的 <a> 标记为内部链接，
   // 方便 handleContentClick 统一拦截。
+  // 兜底：任何非外部、非锚点、非邮件/电话的相对链接也标记为潜在内部链接，
+  // 避免后端链接格式变化导致点不动。
   doc.querySelectorAll('a[href]').forEach((el) => {
     const href = el.getAttribute('href') || '';
     if (/^https?:\/\//i.test(href) || href.startsWith('//')) return;
-    if (/\/(wiki|knowledge-bases\/[^/]+\/wiki)\//i.test(href) || /^wiki:/i.test(href)) {
+    const isWiki = /\/(wiki|knowledge-bases\/[^/]+\/wiki)\//i.test(href) || /^wiki:/i.test(href);
+    const isInternalRelative = !href.startsWith('#') && !href.startsWith('mailto:') && !href.startsWith('tel:') && !href.startsWith('javascript:');
+    if (isWiki || isInternalRelative) {
       el.setAttribute('data-wiki-href', href);
       el.classList.add('wiki-link');
       el.setAttribute('role', 'link');
@@ -136,6 +140,7 @@ function WikiView({ kbId }) {
   const [pageLoadErrors, setPageLoadErrors] = useState([]);
   const [showPageDebug, setShowPageDebug] = useState(false);
   const observerRef = useRef();
+  const contentRef = useRef(null);
 
   const { data: statsRes, loading: statsLoading } = useAsync(
     () => Wiki.getStats(kbId).catch(() => null),
@@ -344,6 +349,16 @@ function WikiView({ kbId }) {
     if (slug) { e.preventDefault(); e.stopPropagation(); openWikiRef(slug); return; }
   }, [openWikiRef, extractWikiSlug]);
 
+  // 兜底：在正文容器上挂原生捕获阶段点击监听。
+  // WebView 里 React 合成事件偶尔无法触发容器 onClick，原生 listener 能确保点击必被拦截。
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    const onClick = (e) => handleContentClick(e);
+    el.addEventListener('click', onClick, true);
+    return () => el.removeEventListener('click', onClick, true);
+  }, [handleContentClick]);
+
   const grouped = groupByType(pages);
 
   const pageContent = pageDetail?.content || pageDetail?.body || pageDetail?.markdown || pageDetail?.text || pageDetail?.html || '';
@@ -419,6 +434,7 @@ function WikiView({ kbId }) {
               ) : pageContent ? (
                 <>
                   <div
+                    ref={contentRef}
                     className="md-body"
                     onClick={handleContentClick}
                   >

@@ -483,6 +483,31 @@ export PATH="$JAVA_HOME/bin:$PATH"
 
 ---
 
+## v1.1.5 — 修复 Wiki 正文内部链接在 WebView 中点击无反应
+
+### 问题
+- 用户反馈：Wiki 正文（主要内容区）里的内部链接点击仍无反应；但页面底部“本页链接 / 反向链接”区域的链接可以正常跳转。
+
+### 根因
+- 正文内部链接依赖内容容器 `<div class="md-body" onClick={handleContentClick}>` 的 React 合成事件做事件委托。
+- 页面底部链接是独立组件，使用各自直接的 `onClick` 处理，因此能正常跳转。
+- 在 WebView 环境下，React 合成事件偶尔无法从 `dangerouslySetInnerHTML` / `ReactMarkdown` 渲染的内部元素正确冒泡到容器，导致容器 `onClick` 不触发，正文链接点了没反应。
+
+### 解决
+- 在正文容器上新增原生捕获阶段点击监听器作为兜底：
+  - 新增 `contentRef` 指向正文容器 `<div class="md-body">`。
+  - `useEffect` 中通过 `contentRef.current.addEventListener('click', handler, true)` 挂载。
+  - 原生监听与 React `onClick` 共存，确保至少有一种机制能拦截点击。
+- 放宽 HTML 内部链接识别：对任何非外部（非 http/https///）、非锚点、非邮件/电话的相对 `<a>` 链接也标记为 `data-wiki-href`，避免后端链接格式变化导致点不动。
+- GitHub Release 的更新日志改用中文。
+
+### 产物
+- 重新构建并签名 `weknora-mobile-webview.apk`（版本 1.1.5）。
+- 源码推送至 GitHub `main`。
+- GitHub Release v1.1.5 发布并上传 APK asset。
+
+---
+
 ## v1.1.4 — 重新构建并修复 APK 未更新 web assets / 版本号问题
 
 ### 问题
