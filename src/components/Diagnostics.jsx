@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
-const APP_VERSION = 'v1.1.5';
+const APP_VERSION = 'v1.1.6';
 
 function extractList(result) {
   if (Array.isArray(result)) return result;
@@ -162,7 +162,7 @@ function Diagnostics() {
   return (
     <div className="p-4">
       <h2 className="mb-4 text-xl font-bold text-gray-900">诊断与调试</h2>
-      <p className="mb-4 text-xs text-gray-500">应用版本：{APP_VERSION}（如果版本低于 v1.1.5，请强制刷新页面或重新安装 APK）</p>
+      <p className="mb-4 text-xs text-gray-500">应用版本：{APP_VERSION}（如果版本低于 v1.1.6，请强制刷新页面或重新安装 APK）</p>
 
       {configView && (
         <div className="mb-4 rounded-2xl bg-white p-4 shadow-sm">

@@ -483,6 +483,30 @@ export PATH="$JAVA_HOME/bin:$PATH"
 
 ---
 
+## v1.1.6 — 修复 Wiki 正文普通蓝色链接（Markdown 内部链接）点击无反应
+
+### 问题
+- 用户反馈：Wiki 正文里“普通蓝色字体”的内部链接点击后仍无反应，不能跳转；页面底部“本页链接 / 反向链接”可以正常跳转。
+
+### 根因
+- 底部链接是独立组件，直接给每个链接绑定 `onClick`，所以能跳。
+- 正文链接（Markdown `[text](slug)` 或 HTML `<a>`）依赖容器层的 React 合成事件委托。WebView 里 React 合成事件无法可靠地从 `ReactMarkdown` / `dangerouslySetInnerHTML` 内部元素冒泡到容器，因此点击事件没有触发 `handleContentClick`。
+- 单独的容器级原生捕获监听虽然能兜底，但在某些 WebView 中仍无法保证内部元素正确冒泡。
+
+### 解决
+- 不再依赖事件委托：每个链接元素直接绑定点击处理。
+- ReactMarkdown 的自定义 `a` 组件增加 `onClick={handleLinkClick}`，点击时直接调用 `openWikiRef` 跳转。
+- 正文渲染后，用 `useEffect` 遍历 `contentRef.current` 里的所有 `<a[href]>` 和 `<button role="link">`，给每个元素单独挂原生捕获阶段 `addEventListener('click', ..., true)`。
+- 事件处理加 `e._wikiHandled` 标志，避免 React `onClick` 和原生 listener 重复触发。
+- 容器级 `handleContentClick` 仍然保留，作为兜底二次拦截。
+
+### 产物
+- 重新构建并签名 `weknora-mobile-webview.apk`（版本 1.1.6，versionCode 20）。
+- 源码推送至 GitHub `main`。
+- GitHub Release v1.1.6 发布并上传 APK asset。
+
+---
+
 ## v1.1.5 — 修复 Wiki 正文内部链接在 WebView 中点击无反应
 
 ### 问题

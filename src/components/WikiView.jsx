@@ -333,12 +333,19 @@ function WikiView({ kbId }) {
   // 点击 wiki 内容里的链接（正文与详情通用）：统一在容器层做事件委托，
   // 正文里无论是 ReactMarkdown 渲染的 <button data-wiki-ref> 还是 HTML 里的 <a data-wiki-href>，都能拦截并应用内跳转
   const handleContentClick = useCallback((e) => {
+    if (e._wikiHandled) return;
     const el = e.target.closest('.wiki-link, a');
     if (!el) return;
     const wikiRef = el.getAttribute('data-wiki-ref');
     const wikiHref = el.getAttribute('data-wiki-href');
     const href = el.getAttribute('href');
-    if (wikiRef) { e.preventDefault(); e.stopPropagation(); openWikiRef(wikiRef); return; }
+    if (wikiRef) {
+      e._wikiHandled = true;
+      e.preventDefault();
+      e.stopPropagation();
+      openWikiRef(wikiRef);
+      return;
+    }
     const target = wikiHref || href;
     if (!target) return;
     // 外部 http(s) 链接放行
@@ -346,18 +353,50 @@ function WikiView({ kbId }) {
       return;
     }
     const slug = extractWikiSlug(target);
-    if (slug) { e.preventDefault(); e.stopPropagation(); openWikiRef(slug); return; }
+    if (slug) {
+      e._wikiHandled = true;
+      e.preventDefault();
+      e.stopPropagation();
+      openWikiRef(slug);
+      return;
+    }
   }, [openWikiRef, extractWikiSlug]);
 
-  // 兜底：在正文容器上挂原生捕获阶段点击监听。
-  // WebView 里 React 合成事件偶尔无法触发容器 onClick，原生 listener 能确保点击必被拦截。
+  // 兜底 2：正文渲染后，给每个链接单独挂原生点击监听器。
+  // 在 WebView 中 React 合成事件 + 容器事件委托可能失效，但直接挂在每个元素上的原生监听器最可靠。
   useEffect(() => {
     const el = contentRef.current;
-    if (!el) return;
-    const onClick = (e) => handleContentClick(e);
-    el.addEventListener('click', onClick, true);
-    return () => el.removeEventListener('click', onClick, true);
-  }, [handleContentClick]);
+    if (!el || !pageContent) return;
+    const attach = () => {
+      const links = el.querySelectorAll('a[href], button[data-wiki-ref], button[data-wiki-href], button[role="link"]');
+      const handlers = [];
+      links.forEach((link) => {
+        const h = (e) => {
+          // 防止 React onClick 和原生 listener 重复处理
+          if (e._wikiHandled) return;
+          e._wikiHandled = true;
+          e.preventDefault();
+          e.stopPropagation();
+          const ref = link.getAttribute('data-wiki-ref');
+          if (ref) { openWikiRef(ref); return; }
+          const target = link.getAttribute('data-wiki-href') || link.getAttribute('href') || '';
+          if (target && /^https?:\/\//i.test(target) && !target.includes('/wiki/') && !target.includes('/knowledge-bases/')) {
+            window.open(target, '_blank');
+            return;
+          }
+          const slug = extractWikiSlug(target);
+          if (slug) openWikiRef(slug);
+        };
+        link.addEventListener('click', h, true);
+        handlers.push([link, h]);
+      });
+      return handlers;
+    };
+    const handlers = attach();
+    return () => {
+      handlers.forEach(([link, h]) => link.removeEventListener('click', h, true));
+    };
+  }, [pageContent, openWikiRef, extractWikiSlug]);
 
   const grouped = groupByType(pages);
 
@@ -446,7 +485,23 @@ function WikiView({ kbId }) {
                         rehypePlugins={[rehypeKatex]}
                         components={{
                           a: ({ href, children }) => {
-                            // 维基内部链接：wiki:slug -> 可点击 button，由原生捕获事件做应用内跳转
+                            const handleLinkClick = (e) => {
+                              if (e._wikiHandled) return;
+                              e._wikiHandled = true;
+                              e.preventDefault();
+                              e.stopPropagation();
+                              if (href && href.startsWith('wiki:')) {
+                                openWikiRef(href.slice(5));
+                                return;
+                              }
+                              if (href && /^https?:\/\//i.test(href)) {
+                                window.open(href, '_blank');
+                                return;
+                              }
+                              const slug = extractWikiSlug(href);
+                              if (slug) openWikiRef(slug);
+                            };
+                            // 维基内部链接：wiki:slug -> 可点击 button
                             if (href && href.startsWith('wiki:')) {
                               const ref = href.slice(5);
                               return (
@@ -455,13 +510,14 @@ function WikiView({ kbId }) {
                                   data-wiki-ref={ref}
                                   type="button"
                                   role="link"
+                                  onClick={handleLinkClick}
                                 >{children}</button>
                               );
                             }
                             // 外部链接：保留原生跳转（新标签打开）
                             if (href && /^https?:\/\//i.test(href)) {
                               return (
-                                <a href={href} target="_blank" rel="noreferrer" className="wiki-link">{children}</a>
+                                <a href={href} target="_blank" rel="noreferrer" className="wiki-link" onClick={handleLinkClick}>{children}</a>
                               );
                             }
                             // 其它内部相对链接：data-wiki-href 交给事件委托处理
@@ -471,6 +527,7 @@ function WikiView({ kbId }) {
                                 data-wiki-href={href || ''}
                                 type="button"
                                 role="link"
+                                onClick={handleLinkClick}
                               >{children}</button>
                             );
                           },
