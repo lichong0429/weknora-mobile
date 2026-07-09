@@ -51,16 +51,7 @@ jobs:
           cp -r dist-webview/* webview-app/app/src/main/assets/web/
           mv webview-app/app/src/main/assets/web/index-webview.html webview-app/app/src/main/assets/web/index.html
 
-      - name: Grant Gradle permission
-        run: chmod +x webview-app/gradlew
-
-      - name: Build APK with Gradle
-        working-directory: ./webview-app
-        run: ./gradlew clean assembleRelease --no-daemon
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
-
-      - name: Generate signing key
+      - name: Generate CI signing key
         env:
           KEYSTORE_PASS: weknora123
         run: |
@@ -73,23 +64,32 @@ jobs:
             -storepass "$KEYSTORE_PASS" \
             -keypass "$KEYSTORE_PASS" \
             -dname "CN=weknora"
+          echo "CI_KEYSTORE_PATH=$(pwd)/android-ci.keystore" >> $GITHUB_ENV
+          echo "CI_KEYSTORE_PASSWORD=$KEYSTORE_PASS" >> $GITHUB_ENV
+          echo "CI_KEY_ALIAS=androidci" >> $GITHUB_ENV
+          echo "CI_KEY_PASSWORD=$KEYSTORE_PASS" >> $GITHUB_ENV
 
-      - name: Sign APK
+      - name: Grant Gradle permission
+        run: chmod +x webview-app/gradlew
+
+      - name: Build APK with Gradle
+        working-directory: ./webview-app
+        run: ./gradlew clean assembleRelease --no-daemon
         env:
-          KEYSTORE_PASS: weknora123
-        run: |
-          ${ANDROID_SDK_ROOT}/build-tools/35.0.0/apksigner sign \
-            --ks android-ci.keystore \
-            --ks-pass pass:"$KEYSTORE_PASS" \
-            --key-pass pass:"$KEYSTORE_PASS" \
-            --ks-key-alias androidci \
-            --out webview-app/app/build/outputs/apk/release/weknora-mobile-webview.apk \
-            webview-app/app/build/outputs/apk/release/app-release-unsigned.apk
+          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
+          CI_KEYSTORE_PATH: ${{ env.CI_KEYSTORE_PATH }}
+          CI_KEYSTORE_PASSWORD: ${{ env.CI_KEYSTORE_PASSWORD }}
+          CI_KEY_ALIAS: ${{ env.CI_KEY_ALIAS }}
+          CI_KEY_PASSWORD: ${{ env.CI_KEY_PASSWORD }}
 
       - name: Verify APK
         run: |
           ls -la webview-app/app/build/outputs/apk/release/
-          ${ANDROID_SDK_ROOT}/build-tools/35.0.0/aapt2 dump badging webview-app/app/build/outputs/apk/release/weknora-mobile-webview.apk | grep -E 'version|package'
+          ${ANDROID_SDK_ROOT}/build-tools/35.0.0/aapt2 dump badging webview-app/app/build/outputs/apk/release/app-release.apk | grep -E 'version|package'
+
+      - name: Rename APK
+        run: |
+          cp webview-app/app/build/outputs/apk/release/app-release.apk webview-app/app/build/outputs/apk/release/weknora-mobile-webview.apk
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

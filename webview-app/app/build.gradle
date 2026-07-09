@@ -14,10 +14,20 @@ android {
 
     signingConfigs {
         release {
-            storeFile file('../../android/android.keystore')
-            storePassword 'weknora123'
-            keyAlias 'android'
-            keyPassword 'weknora123'
+            // CI 环境：使用环境变量指定的 keystore 路径
+            // 本地环境：使用默认的 android/android.keystore
+            def ciKeystore = System.getenv("CI_KEYSTORE_PATH")
+            if (ciKeystore != null && file(ciKeystore).exists()) {
+                storeFile file(ciKeystore)
+                storePassword System.getenv("CI_KEYSTORE_PASSWORD") ?: 'weknora123'
+                keyAlias System.getenv("CI_KEY_ALIAS") ?: 'androidci'
+                keyPassword System.getenv("CI_KEY_PASSWORD") ?: 'weknora123'
+            } else {
+                storeFile file('../../android/android.keystore')
+                storePassword 'weknora123'
+                keyAlias 'android'
+                keyPassword 'weknora123'
+            }
         }
     }
 
