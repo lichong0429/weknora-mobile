@@ -483,6 +483,35 @@ export PATH="$JAVA_HOME/bin:$PATH"
 
 ---
 
+## v1.1.4 — 重新构建并修复 APK 未更新 web assets / 版本号问题
+
+### 问题
+- 用户反馈：从 GitHub Release v1.1.3 下载安装的 APK，系统设置里仍显示版本 1.1.2，Wiki 正文内部链接仍不跳转，图片仍不显示。
+- 经检查：上传到 Release 的 `weknora-mobile-v1.1.3.apk` 实际上打包的是旧版 web assets（`index-webview-*.js` 为旧文件，不含 `extractWikiSlug` / `preprocessWikiLinksHtml` / `getMediaBaseUrl` 等 v1.1.3 新增代码），且 Android `versionName` / `versionCode` 仍为 1.1.2 / 16。
+- 这意味着之前的 Gradle 构建没有正确重新打包最新 web assets，导致 APK 只有文件名是新的，内容和版本还是旧的。
+
+### 根因
+- 构建命令没有先 `clean` Gradle 缓存；Android Gradle 构建在 assets 变更时未失效缓存，沿用了旧的 APK manifest 和 assets。
+- 构建产物未经验证（aapt2 检查版本号、解压检查 JS 内容）就上传。
+
+### 解决
+- 版本号全项目统一提升到 **1.1.4**：
+  - `package.json`：`1.1.3` → `1.1.4`
+  - `webview-app/app/build.gradle`：`versionCode 17` → `18`，`versionName "1.1.3"` → `"1.1.4"`
+  - `src/components/Diagnostics.jsx`：`APP_VERSION` → `v1.1.4`
+- 强制干净构建：先删除 `dist-webview` 和 `webview-app/app/src/main/assets`，再执行 `npm run build` + `./gradlew clean assembleRelease`。
+- 构建完成后立即验证：
+  - 用 `aapt2 dump badging` 确认 APK 的 `versionName` / `versionCode` 正确。
+  - 解压 APK 检查 web assets 的 JS 文件包含 `extractWikiSlug`、`data-wiki-href`、`preprocessWikiLinksHtml`、`getMediaBaseUrl` 等关键字。
+- 新建 GitHub Release **v1.1.4**（不覆盖 v1.1.3），上传验证过的 APK。
+
+### 产物
+- 重新构建并签名 `weknora-mobile-webview.apk`（版本 1.1.4）。
+- 源码推送至 GitHub `main`。
+- GitHub Release v1.1.4 发布并上传 APK asset。
+
+---
+
 ## v1.1.3 — 修复 Wiki 链接/图片解析，统一版本号到 1.1.3
 
 ### 问题
