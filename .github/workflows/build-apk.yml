@@ -51,16 +51,14 @@ jobs:
           cp -r dist-webview/* webview-app/app/src/main/assets/web/
           mv webview-app/app/src/main/assets/web/index-webview.html webview-app/app/src/main/assets/web/index.html
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.11.1'
+      - name: Grant Gradle permission
+        run: chmod +x webview-app/gradlew
 
-      - name: Build APK
+      - name: Build APK with Gradle
         working-directory: ./webview-app
-        run: |
-          chmod +x gradlew
-          ./gradlew clean assembleRelease
+        run: ./gradlew clean assembleRelease --no-daemon
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
 
       - name: Generate signing key
         env:
@@ -91,7 +89,7 @@ jobs:
       - name: Verify APK
         run: |
           ls -la webview-app/app/build/outputs/apk/release/
-          ${ANDROID_SDK_ROOT}/build-tools/35.0.0/aapt2 dump badging webview-app/app/build/outputs/apk/release/weknora-mobile-webview.apk | head -5
+          ${ANDROID_SDK_ROOT}/build-tools/35.0.0/aapt2 dump badging webview-app/app/build/outputs/apk/release/weknora-mobile-webview.apk | grep -E 'version|package'
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
