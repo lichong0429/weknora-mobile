@@ -32,7 +32,6 @@ function encodeSlugPath(slug) {
 }
 
 // 将 WeKnora 维基语法 [[slug]] / [[slug|Title]] 转换为 Markdown 链接 [Title](wiki:slug)
-// 这样 ReactMarkdown 能渲染成可点击元素，由自定义 a 组件拦截 wiki: 协议做应用内跳转
 function preprocessWikiLinks(text) {
   if (typeof text !== 'string') return '';
   return text.replace(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g, (m, slug, title) => {
@@ -43,29 +42,24 @@ function preprocessWikiLinks(text) {
   });
 }
 
-// 将 HTML 正文里的 [[slug|Title]] 维基语法转换为可点击的 <button class="wiki-link" data-wiki-ref>
-// 按钮在移动端 WebView 中一定能触发点击事件，且不会触发 HashRouter 导航
+// 将 HTML 正文里的 [[slug|Title]] 维基语法转换为可点击的 <a class="wiki-link" data-wiki-ref>
 function preprocessWikiLinksHtml(html) {
   if (typeof html !== 'string') return '';
   return html.replace(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g, (m, slug, title) => {
     const s = String(slug).trim().replace(/"/g, '&quot;');
     const t = (title && title.trim()) || String(slug).trim();
     if (!s) return m;
-    return `<button class="wiki-link" data-wiki-ref="${s}" type="button">${t}</button>`;
+    return `<a class="wiki-link" data-wiki-ref="${s}" href="javascript:void(0)">${t}</a>`;
   });
 }
 
-// 解析 Wiki 正文中的媒体地址：后端返回的相对路径需要拼接为后端绝对地址，
-// 否则在 PWA / WebView 的 file:// 或独立域名下会 404。
 function getMediaBaseUrl() {
   const cfg = getConfig();
-  // 优先使用绝对地址（用户设置的后端地址）
   if (cfg.baseUrl && /^https?:\/\//i.test(cfg.baseUrl)) {
     return cfg.baseUrl.replace(/\/$/, '');
   }
   const base = getBaseUrl();
   if (base) return base;
-  // 代理模式下 getBaseUrl() 返回空串，config.baseUrl 是相对路径或为空
   if (cfg.baseUrl && typeof cfg.baseUrl === 'string') {
     const rel = cfg.baseUrl.replace(/\/$/, '');
     if (rel.startsWith('/')) return `${window.location.origin}${rel}`;
@@ -77,9 +71,7 @@ function getMediaBaseUrl() {
 function resolveUrl(url) {
   if (!url || typeof url !== 'string') return url;
   url = url.trim();
-  // 绝对地址：http://、https://、//（协议相对）
   if (/^(https?:)?\/\//i.test(url)) return url;
-  // 保留 data: / blob: / file: / mailto: 等 scheme，不再拼接 base
   if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return url;
   const base = getMediaBaseUrl();
   if (url.startsWith('/')) return `${base}${url}`;
@@ -102,10 +94,7 @@ function resolveMediaUrls(html) {
       }).join(', '));
     }
   });
-  // 同时把 HTML 中指向 /wiki/ 或 /knowledge-bases/.../wiki/ 的 <a> 标记为内部链接，
-  // 方便 handleContentClick 统一拦截。
-  // 兜底：任何非外部、非锚点、非邮件/电话的相对链接也标记为潜在内部链接，
-  // 避免后端链接格式变化导致点不动。
+  // 标记内部 wiki 链接
   doc.querySelectorAll('a[href]').forEach((el) => {
     const href = el.getAttribute('href') || '';
     if (/^https?:\/\//i.test(href) || href.startsWith('//')) return;
@@ -124,7 +113,7 @@ function WikiView({ kbId }) {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
-  const [viewMode, setViewMode] = useState('tree'); // tree | list
+  const [viewMode, setViewMode] = useState('tree');
   const [selectedPage, setSelectedPage] = useState(null);
   const [pageDetail, setPageDetail] = useState(null);
   const [pageLoading, setPageLoading] = useState(false);
@@ -140,7 +129,6 @@ function WikiView({ kbId }) {
   const [pageLoadErrors, setPageLoadErrors] = useState([]);
   const [showPageDebug, setShowPageDebug] = useState(false);
   const observerRef = useRef();
-  const contentRef = useRef(null);
 
   const { data: statsRes, loading: statsLoading } = useAsync(
     () => Wiki.getStats(kbId).catch(() => null),
@@ -148,7 +136,6 @@ function WikiView({ kbId }) {
   );
   const stats = statsRes?.data || statsRes;
 
-  // 图谱（链接边）作为链接数的兜底数据源
   const { data: graphRes } = useAsync(
     () => Wiki.getGraph(kbId).catch(() => null),
     [kbId]
@@ -166,7 +153,6 @@ function WikiView({ kbId }) {
     return () => clearTimeout(timer);
   }, [query]);
 
-  // 分页参数变化时重置页码
   useEffect(() => {
     setPage(1);
     setPages([]);
@@ -188,7 +174,6 @@ function WikiView({ kbId }) {
         attempts.push({ source: label, ok: true, status: 'success' });
         const items = extractList(res);
         setPages((prev) => (pageToLoad === 1 ? items : [...prev, ...items]));
-        // 后端返回满一页时继续加载，返回不足一页或空时结束
         const meta = res?.data || res;
         if (meta && typeof meta.total_pages === 'number') {
           setHasMore(pageToLoad < meta.total_pages);
@@ -219,7 +204,7 @@ function WikiView({ kbId }) {
   }, [kbId]);
 
   useEffect(() => {
-    if (debouncedQuery) return; // 搜索时不自动加载
+    if (debouncedQuery) return;
     loadPages(page, page > 1);
   }, [debouncedQuery, loadPages, page]);
 
@@ -237,12 +222,11 @@ function WikiView({ kbId }) {
     if (node) observerRef.current.observe(node);
   }, [listLoading, loadingMore, loadMore]);
 
-  // 根据 slug / id / title 在已加载页面中查找匹配项（支持层级 slug 末段互匹配）
   const findPageByRef = useCallback((ref) => {
     if (!ref) return null;
     const norm = (s) => String(s || '').toLowerCase().trim();
     const r = norm(ref);
-    const rSeg = r.split('/').pop(); // 末段，如 entity/apple -> apple
+    const rSeg = r.split('/').pop();
     const matchVal = (val) => {
       const v = norm(val);
       if (!v) return false;
@@ -264,7 +248,7 @@ function WikiView({ kbId }) {
     const rawId = page.id || page.page_id || page.slug || '';
     const rawSlug = page.slug || page.id || page.page_id || '';
     const seg = encodeSlugPath(rawId || rawSlug);
-    const lastSeg = String(rawId || rawSlug).split('/').pop(); // 层级 slug 的末段兜底
+    const lastSeg = String(rawId || rawSlug).split('/').pop();
 
     const pathSets = [
       `/knowledge-bases/${kbId}/wiki/pages/`,
@@ -298,111 +282,68 @@ function WikiView({ kbId }) {
     setPageLoading(false);
   }, [kbId]);
 
-  // 点击「维基链接」或正文里的内部链接时，在应用内跳转到对应页面
   const openWikiRef = useCallback((ref) => {
     if (!ref) return;
     const match = findPageByRef(ref);
     if (match) {
       handleOpenPage(match);
     } else {
-      // 兜底：直接用 slug 尝试打开详情
       handleOpenPage({ slug: ref, id: ref, title: ref });
     }
   }, [findPageByRef, handleOpenPage]);
 
-  // 从任意 href 中提取内部 wiki slug：支持 wiki:slug、/wiki/slug、/knowledge-bases/{id}/wiki/pages/slug 等
   const extractWikiSlug = useCallback((raw) => {
     if (!raw || typeof raw !== 'string') return '';
     const href = raw.trim();
     if (href.startsWith('wiki:')) return href.slice(5).trim();
-    // 去掉 query / hash
     let path = href.split('?')[0].split('#')[0];
-    // 支持 /knowledge-bases/{kbId}/wiki/pages/{slug} 及其变体
     const kbWikiMatch = path.match(/\/knowledge-bases\/[^/]+\/wiki\/(?:pages|page)\/(.+)/i);
     if (kbWikiMatch) return decodeURIComponent(kbWikiMatch[1].replace(/^\/+|\/+$/g, ''));
-    // 支持 /wiki/{slug}
     const wikiMatch = path.match(/\/wiki\/(.+)/i);
     if (wikiMatch) return decodeURIComponent(wikiMatch[1].replace(/^\/+|\/+$/g, ''));
-    // 兜底：如果 href 是相对路径且不含 http，把最后一段当 slug 试试
     if (!/^https?:\/\//i.test(href) && !href.startsWith('//') && path) {
       return decodeURIComponent(path.split('/').pop().replace(/^\/+|\/+$/g, ''));
     }
     return '';
   }, []);
 
-  // 点击 wiki 内容里的链接（正文与详情通用）：统一在容器层做事件委托，
-  // 正文里无论是 ReactMarkdown 渲染的 <button data-wiki-ref> 还是 HTML 里的 <a data-wiki-href>，都能拦截并应用内跳转
-  const handleContentClick = useCallback((e) => {
-    if (e._wikiHandled) return;
-    const el = e.target.closest('.wiki-link, a');
-    if (!el) return;
-    const wikiRef = el.getAttribute('data-wiki-ref');
-    const wikiHref = el.getAttribute('data-wiki-href');
-    const href = el.getAttribute('href');
-    if (wikiRef) {
-      e._wikiHandled = true;
-      e.preventDefault();
-      e.stopPropagation();
-      openWikiRef(wikiRef);
+  // 统一处理链接点击：供 ReactMarkdown 自定义组件和 HTML 内容使用
+  const handleLinkClick = useCallback((e, href) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (href && href.startsWith('wiki:')) {
+      openWikiRef(href.slice(5));
       return;
     }
-    const target = wikiHref || href;
-    if (!target) return;
-    // 外部 http(s) 链接放行
-    if (/^https?:\/\//i.test(target) && !target.includes('/wiki/') && !target.includes('/knowledge-bases/')) {
+    if (href && /^https?:\/\//i.test(href)) {
+      window.open(href, '_blank');
       return;
     }
-    const slug = extractWikiSlug(target);
-    if (slug) {
-      e._wikiHandled = true;
-      e.preventDefault();
-      e.stopPropagation();
-      openWikiRef(slug);
-      return;
-    }
+    const slug = extractWikiSlug(href);
+    if (slug) openWikiRef(slug);
   }, [openWikiRef, extractWikiSlug]);
 
-  // 兜底 2：正文渲染后，给每个链接单独挂原生点击监听器。
-  // 在 WebView 中 React 合成事件 + 容器事件委托可能失效，但直接挂在每个元素上的原生监听器最可靠。
-  useEffect(() => {
-    const el = contentRef.current;
-    if (!el || !pageContent) return;
-    const attach = () => {
-      const links = el.querySelectorAll('a[href], button[data-wiki-ref], button[data-wiki-href], button[role="link"]');
-      const handlers = [];
-      links.forEach((link) => {
-        const h = (e) => {
-          // 防止 React onClick 和原生 listener 重复处理
-          if (e._wikiHandled) return;
-          e._wikiHandled = true;
-          e.preventDefault();
-          e.stopPropagation();
-          const ref = link.getAttribute('data-wiki-ref');
-          if (ref) { openWikiRef(ref); return; }
-          const target = link.getAttribute('data-wiki-href') || link.getAttribute('href') || '';
-          if (target && /^https?:\/\//i.test(target) && !target.includes('/wiki/') && !target.includes('/knowledge-bases/')) {
-            window.open(target, '_blank');
-            return;
-          }
-          const slug = extractWikiSlug(target);
-          if (slug) openWikiRef(slug);
-        };
-        link.addEventListener('click', h, true);
-        handlers.push([link, h]);
-      });
-      return handlers;
-    };
-    const handlers = attach();
-    return () => {
-      handlers.forEach(([link, h]) => link.removeEventListener('click', h, true));
-    };
-  }, [pageContent, openWikiRef, extractWikiSlug]);
+  // 处理 HTML 内容中的链接点击（通过 dangerouslySetInnerHTML 渲染的内容）
+  const handleHtmlClick = useCallback((e) => {
+    const el = e.target.closest('a[data-wiki-ref], a[data-wiki-href], a.wiki-link');
+    if (!el) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const ref = el.getAttribute('data-wiki-ref');
+    if (ref) { openWikiRef(ref); return; }
+    const href = el.getAttribute('data-wiki-href') || el.getAttribute('href') || '';
+    if (href && /^https?:\/\//i.test(href) && !href.includes('/wiki/') && !href.includes('/knowledge-bases/')) {
+      window.open(href, '_blank');
+      return;
+    }
+    const slug = extractWikiSlug(href);
+    if (slug) openWikiRef(slug);
+  }, [openWikiRef, extractWikiSlug]);
 
   const grouped = groupByType(pages);
 
   const pageContent = pageDetail?.content || pageDetail?.body || pageDetail?.markdown || pageDetail?.text || pageDetail?.html || '';
 
-  // 链接数量：stats.total_links → 图谱边数 → 已加载页面 out/in_links 求和
   const statsLinks = (stats && typeof stats.total_links === 'number') ? stats.total_links : null;
   const graphLinks = (graph && Array.isArray(graph.edges)) ? graph.edges.length : null;
   const pagesLinkSum = pages.reduce((s, p) =>
@@ -410,13 +351,43 @@ function WikiView({ kbId }) {
       + (Array.isArray(p.in_links) ? p.in_links.length : 0), 0);
   const totalLinks = statsLinks ?? graphLinks ?? pagesLinkSum ?? 0;
 
-  // 页面数：优先 stats，否则已加载页数
   const totalPages = (stats && typeof stats.total_pages === 'number') ? stats.total_pages : pages.length;
   const pendingIssues = (stats && typeof stats.pending_issues === 'number') ? stats.pending_issues : 0;
 
-  // 当前页的出链 / 入链（结构化字段）
   const outLinks = Array.isArray(pageDetail?.out_links) ? pageDetail.out_links : [];
   const inLinks = Array.isArray(pageDetail?.in_links) ? pageDetail.in_links : [];
+
+  // 渲染 Markdown 链接的自定义组件
+  const renderMarkdownLink = useCallback(({ href, children }) => {
+    const onClick = (e) => handleLinkClick(e, href);
+    if (href && href.startsWith('wiki:')) {
+      return (
+        <span
+          className="wiki-link"
+          onClick={onClick}
+          role="link"
+          tabIndex={0}
+          style={{ cursor: 'pointer', color: '#2563eb', textDecoration: 'underline' }}
+        >{children}</span>
+      );
+    }
+    if (href && /^https?:\/\//i.test(href)) {
+      return (
+        <a href={href} target="_blank" rel="noreferrer" className="wiki-link" onClick={onClick}>
+          {children}
+        </a>
+      );
+    }
+    return (
+      <span
+        className="wiki-link"
+        onClick={onClick}
+        role="link"
+        tabIndex={0}
+        style={{ cursor: 'pointer', color: '#2563eb', textDecoration: 'underline' }}
+      >{children}</span>
+    );
+  }, [handleLinkClick]);
 
   if (selectedPage) {
     const isHtml = isHtmlContent(pageContent);
@@ -472,11 +443,7 @@ function WikiView({ kbId }) {
                 </div>
               ) : pageContent ? (
                 <>
-                  <div
-                    ref={contentRef}
-                    className="md-body"
-                    onClick={handleContentClick}
-                  >
+                  <div className="md-body" onClick={isHtml ? handleHtmlClick : undefined}>
                     {isHtml ? (
                       <div dangerouslySetInnerHTML={{ __html: cleanHtml(resolveMediaUrls(preprocessWikiLinksHtml(pageContent))) }} />
                     ) : (
@@ -484,53 +451,7 @@ function WikiView({ kbId }) {
                         remarkPlugins={[remarkGfm, remarkMath]}
                         rehypePlugins={[rehypeKatex]}
                         components={{
-                          a: ({ href, children }) => {
-                            const handleLinkClick = (e) => {
-                              if (e._wikiHandled) return;
-                              e._wikiHandled = true;
-                              e.preventDefault();
-                              e.stopPropagation();
-                              if (href && href.startsWith('wiki:')) {
-                                openWikiRef(href.slice(5));
-                                return;
-                              }
-                              if (href && /^https?:\/\//i.test(href)) {
-                                window.open(href, '_blank');
-                                return;
-                              }
-                              const slug = extractWikiSlug(href);
-                              if (slug) openWikiRef(slug);
-                            };
-                            // 维基内部链接：wiki:slug -> 可点击 button
-                            if (href && href.startsWith('wiki:')) {
-                              const ref = href.slice(5);
-                              return (
-                                <button
-                                  className="wiki-link"
-                                  data-wiki-ref={ref}
-                                  type="button"
-                                  role="link"
-                                  onClick={handleLinkClick}
-                                >{children}</button>
-                              );
-                            }
-                            // 外部链接：保留原生跳转（新标签打开）
-                            if (href && /^https?:\/\//i.test(href)) {
-                              return (
-                                <a href={href} target="_blank" rel="noreferrer" className="wiki-link" onClick={handleLinkClick}>{children}</a>
-                              );
-                            }
-                            // 其它内部相对链接：data-wiki-href 交给事件委托处理
-                            return (
-                              <button
-                                className="wiki-link"
-                                data-wiki-href={href || ''}
-                                type="button"
-                                role="link"
-                                onClick={handleLinkClick}
-                              >{children}</button>
-                            );
-                          },
+                          a: renderMarkdownLink,
                           img: ({ src, alt, title }) => (
                             <img
                               src={resolveUrl(src)}
@@ -545,7 +466,6 @@ function WikiView({ kbId }) {
                     )}
                   </div>
 
-                  {/* 出链 / 入链（结构化字段，可点击跳转） */}
                   {(outLinks.length > 0 || inLinks.length > 0) && (
                     <div className="mt-5 border-t border-gray-100 pt-4">
                       {outLinks.length > 0 && (
@@ -569,7 +489,6 @@ function WikiView({ kbId }) {
 
   return (
     <div className="space-y-3">
-      {/* Stats cards */}
       <div className="grid grid-cols-3 gap-2">
         <div className="rounded-2xl bg-white p-3 shadow-sm text-center">
           <BarChart3 className="mx-auto mb-1 h-5 w-5 text-blue-600" />
@@ -594,7 +513,6 @@ function WikiView({ kbId }) {
         </div>
       </div>
 
-      {/* Search and view mode */}
       <div className="flex gap-2">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
@@ -615,7 +533,6 @@ function WikiView({ kbId }) {
         </button>
       </div>
 
-      {/* Debug toggle */}
       {(loadErrors.length > 0 || listError) && (
         <button
           onClick={() => setShowDebug((s) => !s)}
@@ -637,7 +554,6 @@ function WikiView({ kbId }) {
         </div>
       )}
 
-      {/* Search results */}
       {debouncedQuery && (
         <div className="space-y-2">
           {searchLoading && (
@@ -780,7 +696,6 @@ function isHtmlContent(text) {
   const tagPattern = /<[^\s<>/][^<>]*>/i;
   const hasHtmlTags = tagPattern.test(text);
   const hasMarkdown = /^#{1,6}\s|^\s*[-*+]\s|^\s*\d+\.\s|^\[.*\]\(.*\)|^\*\*.*\*\*|^__.*__|^`.*`|^```/m.test(text);
-  // 如果包含明显 HTML 标签且不像 Markdown，按 HTML 渲染
   return hasHtmlTags && !hasMarkdown;
 }
 
