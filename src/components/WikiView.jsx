@@ -362,24 +362,38 @@ function WikiView({ kbId }) {
   const outLinks = Array.isArray(pageDetail?.out_links) ? pageDetail.out_links : [];
   const inLinks = Array.isArray(pageDetail?.in_links) ? pageDetail.in_links : [];
 
-  // 渲染 Markdown 链接的自定义组件 - 使用 <a> 标签确保 WebView 中可点击
+  // 渲染 Markdown 链接的自定义组件 - 使用 <button> 确保可点击
   const renderMarkdownLink = useCallback(({ href, children }) => {
-    const onClick = (e) => {
+    const handleClick = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      handleLinkClick(e, href);
+      if (href && href.startsWith('wiki:')) {
+        openWikiRef(href.slice(5));
+      } else if (href && /^https?:\/\//i.test(href)) {
+        window.open(href, '_blank');
+      } else {
+        const slug = extractWikiSlug(href);
+        if (slug) openWikiRef(slug);
+      }
     };
-    // 统一用 <a> 标签，WebView 中对 <a> 的点击支持最好
     return (
-      <a
-        href="javascript:void(0)"
+      <button
         className="wiki-link"
-        onClick={onClick}
-        role="link"
-        style={{ cursor: 'pointer', color: '#2563eb', textDecoration: 'underline' }}
-      >{children}</a>
+        onClick={handleClick}
+        type="button"
+        style={{
+          cursor: 'pointer',
+          color: '#2563eb',
+          textDecoration: 'underline',
+          background: 'none',
+          border: 'none',
+          padding: 0,
+          font: 'inherit',
+          display: 'inline'
+        }}
+      >{children}</button>
     );
-  }, [handleLinkClick]);
+  }, [openWikiRef, extractWikiSlug]);
 
   if (selectedPage) {
     const isHtml = isHtmlContent(pageContent);
