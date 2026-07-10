@@ -1,5 +1,41 @@
 apply plugin: 'com.android.application'
 
+// 从 git tag 自动获取版本号（如 v1.1.7 → versionName=1.1.7, versionCode=1001007）
+def getVersionNameFromGit() {
+    def stdout = new ByteArrayOutputStream()
+    try {
+        exec {
+            commandLine 'git', 'describe', '--tags', '--always'
+            standardOutput = stdout
+            errorOutput = new ByteArrayOutputStream()
+            ignoreExitValue = true
+        }
+        def tag = stdout.toString().trim()
+        // 去掉 v 前缀
+        if (tag.startsWith('v')) return tag.substring(1)
+        return tag ?: '1.0.0'
+    } catch (Exception e) {
+        return '1.0.0'
+    }
+}
+
+def getVersionCodeFromGit() {
+    def stdout = new ByteArrayOutputStream()
+    try {
+        exec {
+            commandLine 'git', 'rev-list', '--count', 'HEAD'
+            standardOutput = stdout
+            errorOutput = new ByteArrayOutputStream()
+            ignoreExitValue = true
+        }
+        def count = stdout.toString().trim().toInteger()
+        // 基础版本号 + commit 数量
+        return 1000000 + count
+    } catch (Exception e) {
+        return 1
+    }
+}
+
 android {
     namespace 'com.weknora.mobile'
     compileSdk 36
@@ -8,8 +44,8 @@ android {
         applicationId "com.weknora.mobile"
         minSdk 24
         targetSdk 36
-        versionCode 21
-        versionName "1.1.7"
+        versionCode getVersionCodeFromGit()
+        versionName getVersionNameFromGit()
     }
 
     signingConfigs {

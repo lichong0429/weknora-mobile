@@ -55,23 +55,33 @@ jobs:
           cp -r dist-webview/* webview-app/app/src/main/assets/web/
           mv webview-app/app/src/main/assets/web/index-webview.html webview-app/app/src/main/assets/web/index.html
 
-      - name: Generate CI signing key
+      - name: Decode signing key from Secrets
         env:
-          KEYSTORE_PASS: weknora123
+          SIGNING_KEY_BASE64: ${{ secrets.SIGNING_KEY_BASE64 }}
         run: |
-          keytool -genkey -v \
-            -keystore android-ci.keystore \
-            -alias androidci \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -storepass "$KEYSTORE_PASS" \
-            -keypass "$KEYSTORE_PASS" \
-            -dname "CN=weknora"
-          echo "CI_KEYSTORE_PATH=$(pwd)/android-ci.keystore" >> $GITHUB_ENV
-          echo "CI_KEYSTORE_PASSWORD=$KEYSTORE_PASS" >> $GITHUB_ENV
-          echo "CI_KEY_ALIAS=androidci" >> $GITHUB_ENV
-          echo "CI_KEY_PASSWORD=$KEYSTORE_PASS" >> $GITHUB_ENV
+          if [ -n "$SIGNING_KEY_BASE64" ]; then
+            echo "$SIGNING_KEY_BASE64" | base64 -d > android-ci.keystore
+            echo "Using keystore from GitHub Secrets"
+            echo "CI_KEYSTORE_PATH=$(pwd)/android-ci.keystore" >> $GITHUB_ENV
+            echo "CI_KEYSTORE_PASSWORD=${{ secrets.KEY_STORE_PASSWORD }}" >> $GITHUB_ENV
+            echo "CI_KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> $GITHUB_ENV
+            echo "CI_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
+          else
+            echo "No SIGNING_KEY_BASE64 found, generating temporary keystore"
+            keytool -genkey -v \
+              -keystore android-ci.keystore \
+              -alias androidci \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "weknora123" \
+              -keypass "weknora123" \
+              -dname "CN=weknora"
+            echo "CI_KEYSTORE_PATH=$(pwd)/android-ci.keystore" >> $GITHUB_ENV
+            echo "CI_KEYSTORE_PASSWORD=weknora123" >> $GITHUB_ENV
+            echo "CI_KEY_ALIAS=androidci" >> $GITHUB_ENV
+            echo "CI_KEY_PASSWORD=weknora123" >> $GITHUB_ENV
+          fi
 
       - name: Grant Gradle permission
         run: chmod +x webview-app/gradlew
