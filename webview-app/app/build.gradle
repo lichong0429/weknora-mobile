@@ -1,23 +1,38 @@
 apply plugin: 'com.android.application'
 
-// 自动版本号：主版本.次版本.commit次数
-// 例如：commit 86 次 → 1.1.86
+// 自动版本号：从 1.1.7 开始，每次 Release 自动 +1
+// 当前 commit 89，1.1.7 是 82 个 commit 时，所以差值是 7
+// 版本 = 7 + (count - 82) = 7 + 7 = 14 → 1.1.14
+// 等等，让我重新算... 1.1.7 是 82 个 commit，现在 89 个，差 7
+// 所以版本 = 7 + 7 = 14，即 1.1.14
+// 下次 commit 90 → 1.1.15
+// 这样不对，应该是 1.1.7 → 1.1.8 → 1.1.9
+// 让我换个方式：直接记录 1.1.7 对应的 commit 数，然后每次加 1
+
+// 简单方案：手动维护基础版本，每次 Release 手动改这里
+// 或者：从 git tag 获取上一个版本，然后 +1
+
 def getAutoVersion() {
     def stdout = new ByteArrayOutputStream()
     try {
         exec {
-            commandLine 'git', 'rev-list', '--count', 'HEAD'
+            commandLine 'git', 'tag', '--list', 'v*', '--sort=-v:refname'
             standardOutput = stdout
             errorOutput = new ByteArrayOutputStream()
             ignoreExitValue = true
         }
-        def count = stdout.toString().trim().toInteger()
-        def major = 1
-        def minor = 1
-        def patch = count
-        return "${major}.${minor}.${patch}"
+        def tags = stdout.toString().trim().split('\n')
+        def lastTag = tags[0].trim()
+        if (lastTag.startsWith('v')) {
+            def parts = lastTag.substring(1).split('\\.')
+            if (parts.length >= 3) {
+                def patch = parts[2].toInteger() + 1
+                return "${parts[0]}.${parts[1]}.${patch}"
+            }
+        }
+        return '1.1.8'
     } catch (Exception e) {
-        return '1.1.0'
+        return '1.1.8'
     }
 }
 
