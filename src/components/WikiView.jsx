@@ -330,6 +330,13 @@ function WikiView({ kbId }) {
 
   // 处理 HTML 内容中的链接点击（通过 dangerouslySetInnerHTML 渲染的内容）
   const handleHtmlClick = useCallback((e) => {
+    // 处理 <button class="wiki-link">（ReactMarkdown 渲染的链接）
+    const btnEl = e.target.closest('button.wiki-link');
+    if (btnEl) {
+      // button 有自己的 onClick，不需要在这里处理
+      return;
+    }
+    // 处理 <a> 标签（HTML 内容中的链接）
     const el = e.target.closest('a[data-wiki-ref], a[data-wiki-href], a.wiki-link');
     if (!el) return;
     e.preventDefault();
@@ -449,7 +456,7 @@ function WikiView({ kbId }) {
                 </div>
               ) : pageContent ? (
                 <>
-                  <div className="md-body" onClick={isHtml ? handleHtmlClick : undefined}>
+                  <div className="md-body" onClick={handleHtmlClick}>
                     {isHtml ? (
                       <div dangerouslySetInnerHTML={{ __html: cleanHtml(resolveMediaUrls(preprocessWikiLinksHtml(pageContent))) }} />
                     ) : (
