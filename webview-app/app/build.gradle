@@ -51,15 +51,15 @@ android {
     signingConfigs {
         release {
             // 使用项目根目录下的 android-ci/ci.keystore
-            // rootDir 指向 webview-app/ 的父目录（即项目根目录）
-            def ciKeystore = file("${rootDir}/android-ci/ci.keystore")
+            // project.rootDir 指向 webview-app/，所以用 ../../ 回到项目根目录
+            def ciKeystore = file("../../android-ci/ci.keystore")
             if (ciKeystore.exists()) {
                 storeFile ciKeystore
                 storePassword 'weknora123'
                 keyAlias 'cicert'
                 keyPassword 'weknora123'
             } else {
-                storeFile file("${rootDir}/android/android.keystore")
+                storeFile file("../../android/android.keystore")
                 storePassword 'weknora123'
                 keyAlias 'android'
                 keyPassword 'weknora123'
