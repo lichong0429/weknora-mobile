@@ -55,13 +55,6 @@ jobs:
           cp -r dist-webview/* webview-app/app/src/main/assets/web/
           mv webview-app/app/src/main/assets/web/index-webview.html webview-app/app/src/main/assets/web/index.html
 
-      - name: Set CI signing env
-        run: |
-          echo "CI_KEYSTORE_PATH=$(pwd)/android-ci/ci.keystore" >> $GITHUB_ENV
-          echo "CI_KEYSTORE_PASSWORD=weknora123" >> $GITHUB_ENV
-          echo "CI_KEY_ALIAS=cicert" >> $GITHUB_ENV
-          echo "CI_KEY_PASSWORD=weknora123" >> $GITHUB_ENV
-
       - name: Grant Gradle permission
         run: chmod +x webview-app/gradlew
 
@@ -70,10 +63,6 @@ jobs:
         run: ./gradlew clean assembleRelease --no-daemon
         env:
           ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
-          CI_KEYSTORE_PATH: ${{ env.CI_KEYSTORE_PATH }}
-          CI_KEYSTORE_PASSWORD: ${{ env.CI_KEYSTORE_PASSWORD }}
-          CI_KEY_ALIAS: ${{ env.CI_KEY_ALIAS }}
-          CI_KEY_PASSWORD: ${{ env.CI_KEY_PASSWORD }}
 
       - name: Verify APK
         run: |
