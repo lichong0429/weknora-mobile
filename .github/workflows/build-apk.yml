@@ -23,7 +23,7 @@ jobs:
         with:
           fetch-depth: 0  # 拉取完整历史，包括所有 tag
 
-      - name: Calculate version from tag
+      - name: Calculate version
         id: version
         run: |
           if [ "${{ github.ref_type }}" = "tag" ]; then
@@ -34,9 +34,12 @@ jobs:
             # 手动触发时使用输入版本
             VERSION=${{ github.event.inputs.version }}
           fi
+          # versionCode: 基于时间戳确保递增 (2025071101 = 2025年7月11日第1次)
+          VERSION_CODE=$(date +%Y%m%d%H%M)
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
-          echo "Version: ${VERSION}"
+          echo "version_code=${VERSION_CODE}" >> $GITHUB_OUTPUT
+          echo "Version: ${VERSION}, VersionCode: ${VERSION_CODE}"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -84,7 +87,7 @@ jobs:
         env:
           ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
           VERSION_NAME: ${{ steps.version.outputs.version }}
-          VERSION_CODE: ${{ github.run_number }}
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
 
       - name: Verify APK
         run: |
