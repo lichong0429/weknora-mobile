@@ -55,6 +55,11 @@ jobs:
           cp -r dist-webview/* webview-app/app/src/main/assets/web/
           mv webview-app/app/src/main/assets/web/index-webview.html webview-app/app/src/main/assets/web/index.html
 
+      - name: Verify keystore exists
+        run: |
+          ls -la android-ci/ci.keystore
+          ls -la webview-app/../android-ci/ci.keystore || echo "not found via .."
+
       - name: Grant Gradle permission
         run: chmod +x webview-app/gradlew
 
