@@ -51,13 +51,19 @@ android {
     signingConfigs {
         release {
             // CI 环境：使用环境变量指定的 keystore 路径
-            // 本地环境：使用默认的 android/android.keystore
+            // 本地环境：使用默认的 android/android.keystore 或 android-ci/ci.keystore
             def ciKeystore = System.getenv("CI_KEYSTORE_PATH")
             if (ciKeystore != null && file(ciKeystore).exists()) {
                 storeFile file(ciKeystore)
                 storePassword System.getenv("CI_KEYSTORE_PASSWORD") ?: 'weknora123'
-                keyAlias System.getenv("CI_KEY_ALIAS") ?: 'androidci'
+                keyAlias System.getenv("CI_KEY_ALIAS") ?: 'cicert'
                 keyPassword System.getenv("CI_KEY_PASSWORD") ?: 'weknora123'
+            } else if (file('../../android-ci/ci.keystore').exists()) {
+                // 本地构建也可以使用 CI 密钥，保持一致
+                storeFile file('../../android-ci/ci.keystore')
+                storePassword 'weknora123'
+                keyAlias 'cicert'
+                keyPassword 'weknora123'
             } else {
                 storeFile file('../../android/android.keystore')
                 storePassword 'weknora123'
