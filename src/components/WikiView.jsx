@@ -55,25 +55,38 @@ function preprocessWikiLinksHtml(html) {
 
 function getMediaBaseUrl() {
   const cfg = getConfig();
+  // 优先使用用户配置的绝对地址
   if (cfg.baseUrl && /^https?:\/\//i.test(cfg.baseUrl)) {
     return cfg.baseUrl.replace(/\/$/, '');
   }
+  // WebView file:// 环境下 window.location.origin 是空串，不能依赖
   const base = getBaseUrl();
-  if (base) return base;
+  if (base && /^https?:\/\//i.test(base)) return base;
+  // 兜底：如果 baseUrl 是相对路径，尝试拼接
   if (cfg.baseUrl && typeof cfg.baseUrl === 'string') {
     const rel = cfg.baseUrl.replace(/\/$/, '');
-    if (rel.startsWith('/')) return `${window.location.origin}${rel}`;
-    return `${window.location.origin}/${rel}`;
+    if (rel.startsWith('/')) {
+      // 相对路径，需要知道当前页面协议+域名
+      // WebView 中从 file:// 加载时无法确定，返回空让调用方处理
+      return '';
+    }
+    return rel;
   }
-  return window.location.origin;
+  return '';
 }
 
 function resolveUrl(url) {
   if (!url || typeof url !== 'string') return url;
   url = url.trim();
+  // 已经是绝对地址
   if (/^(https?:)?\/\//i.test(url)) return url;
+  // 保留 data: / blob: 等 scheme
   if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return url;
   const base = getMediaBaseUrl();
+  if (!base) {
+    // 无法解析 base，返回原 URL（可能在 WebView 中通过拦截处理）
+    return url;
+  }
   if (url.startsWith('/')) return `${base}${url}`;
   return `${base}/${url}`;
 }
@@ -357,35 +370,22 @@ function WikiView({ kbId }) {
   const outLinks = Array.isArray(pageDetail?.out_links) ? pageDetail.out_links : [];
   const inLinks = Array.isArray(pageDetail?.in_links) ? pageDetail.in_links : [];
 
-  // 渲染 Markdown 链接的自定义组件
+  // 渲染 Markdown 链接的自定义组件 - 使用 <a> 标签确保 WebView 中可点击
   const renderMarkdownLink = useCallback(({ href, children }) => {
-    const onClick = (e) => handleLinkClick(e, href);
-    if (href && href.startsWith('wiki:')) {
-      return (
-        <span
-          className="wiki-link"
-          onClick={onClick}
-          role="link"
-          tabIndex={0}
-          style={{ cursor: 'pointer', color: '#2563eb', textDecoration: 'underline' }}
-        >{children}</span>
-      );
-    }
-    if (href && /^https?:\/\//i.test(href)) {
-      return (
-        <a href={href} target="_blank" rel="noreferrer" className="wiki-link" onClick={onClick}>
-          {children}
-        </a>
-      );
-    }
+    const onClick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      handleLinkClick(e, href);
+    };
+    // 统一用 <a> 标签，WebView 中对 <a> 的点击支持最好
     return (
-      <span
+      <a
+        href="javascript:void(0)"
         className="wiki-link"
         onClick={onClick}
         role="link"
-        tabIndex={0}
         style={{ cursor: 'pointer', color: '#2563eb', textDecoration: 'underline' }}
-      >{children}</span>
+      >{children}</a>
     );
   }, [handleLinkClick]);
 
