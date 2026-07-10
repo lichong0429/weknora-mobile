@@ -83,6 +83,8 @@ jobs:
         run: ./gradlew clean assembleRelease --no-daemon
         env:
           ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
+          VERSION_NAME: ${{ steps.version.outputs.version }}
+          VERSION_CODE: ${{ github.run_number }}
 
       - name: Verify APK
         run: |

@@ -1,7 +1,12 @@
 apply plugin: 'com.android.application'
 
-// 从 git tag 获取版本号（如 v1.1.8 → 1.1.8）
-def getVersionFromTag() {
+// 从环境变量获取版本号（CI 传递），或从 git tag 获取
+def getVersionName() {
+    // CI 环境变量优先
+    def envVersion = System.getenv('VERSION_NAME')
+    if (envVersion) return envVersion
+    
+    // 本地构建时从 git tag 获取
     def stdout = new ByteArrayOutputStream()
     try {
         exec {
@@ -11,16 +16,18 @@ def getVersionFromTag() {
             ignoreExitValue = true
         }
         def tag = stdout.toString().trim()
-        if (tag.startsWith('v')) {
-            return tag.substring(1)
-        }
+        if (tag.startsWith('v')) return tag.substring(1)
         return tag
     } catch (Exception e) {
         return '1.1.8'
     }
 }
 
-def getVersionCodeFromGit() {
+// versionCode 从环境变量获取，或从 git commit 数获取
+def getVersionCode() {
+    def envCode = System.getenv('VERSION_CODE')
+    if (envCode) return envCode.toInteger()
+    
     def stdout = new ByteArrayOutputStream()
     try {
         exec {
@@ -43,8 +50,8 @@ android {
         applicationId "com.weknora.mobile"
         minSdk 24
         targetSdk 36
-        versionCode getVersionCodeFromGit()
-        versionName getVersionFromTag()
+        versionCode getVersionCode()
+        versionName getVersionName()
     }
 
     signingConfigs {
