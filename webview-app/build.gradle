@@ -1,5 +1,8 @@
 buildscript {
     repositories {
+        google()
+        mavenCentral()
+        // 备用：阿里云镜像（官方失败时回退）
         maven { url 'https://maven.aliyun.com/repository/google' }
         maven { url 'https://maven.aliyun.com/repository/public' }
     }
@@ -10,6 +13,9 @@ buildscript {
 
 allprojects {
     repositories {
+        google()
+        mavenCentral()
+        // 备用：阿里云镜像
         maven { url 'https://maven.aliyun.com/repository/google' }
         maven { url 'https://maven.aliyun.com/repository/public' }
     }
