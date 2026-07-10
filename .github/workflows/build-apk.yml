@@ -2,14 +2,13 @@ name: Build WebView APK
 
 on:
   push:
-    branches: [main]
-    tags: ['v*']
+    tags: ['v*']  # 只有打 tag 时才触发构建
   workflow_dispatch:
     inputs:
       version:
-        description: '版本号 (如 1.1.87)'
+        description: '版本号 (如 1.1.88)'
         required: true
-        default: '1.1.87'
+        default: '1.1.88'
 
 jobs:
   build:
@@ -24,14 +23,20 @@ jobs:
         with:
           fetch-depth: 0  # 拉取完整历史，包括所有 tag
 
-      - name: Calculate version
+      - name: Calculate version from tag
         id: version
         run: |
-          COMMIT_COUNT=$(git rev-list --count HEAD)
-          VERSION="1.1.${COMMIT_COUNT}"
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            # 从 tag 提取版本号 (v1.1.88 → 1.1.88)
+            TAG=${{ github.ref_name }}
+            VERSION=${TAG#v}
+          else
+            # 手动触发时使用输入版本
+            VERSION=${{ github.event.inputs.version }}
+          fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
-          echo "Calculated version: ${VERSION}"
+          echo "Version: ${VERSION}"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
