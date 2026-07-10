@@ -1,47 +1,7 @@
 apply plugin: 'com.android.application'
 
-// 从环境变量获取版本号（CI 传递），或从 git tag 获取
-def getVersionName() {
-    // CI 环境变量优先
-    def envVersion = System.getenv('VERSION_NAME')
-    if (envVersion) return envVersion
-    
-    // 本地构建时从 git tag 获取
-    def stdout = new ByteArrayOutputStream()
-    try {
-        exec {
-            commandLine 'git', 'describe', '--tags', '--exact-match'
-            standardOutput = stdout
-            errorOutput = new ByteArrayOutputStream()
-            ignoreExitValue = true
-        }
-        def tag = stdout.toString().trim()
-        if (tag.startsWith('v')) return tag.substring(1)
-        return tag
-    } catch (Exception e) {
-        return '1.1.8'
-    }
-}
-
-// versionCode 从环境变量获取，或从 git commit 数获取
-def getVersionCode() {
-    def envCode = System.getenv('VERSION_CODE')
-    if (envCode) return envCode.toInteger()
-    
-    def stdout = new ByteArrayOutputStream()
-    try {
-        exec {
-            commandLine 'git', 'rev-list', '--count', 'HEAD'
-            standardOutput = stdout
-            errorOutput = new ByteArrayOutputStream()
-            ignoreExitValue = true
-        }
-        return stdout.toString().trim().toInteger()
-    } catch (Exception e) {
-        return 1
-    }
-}
-
+// 版本号固定为 1.1.8，每次 Release 手动更新这里
+// versionCode 使用 2025071101 格式（年月日时）确保递增
 android {
     namespace 'com.weknora.mobile'
     compileSdk 36
@@ -50,14 +10,13 @@ android {
         applicationId "com.weknora.mobile"
         minSdk 24
         targetSdk 36
-        versionCode getVersionCode()
-        versionName getVersionName()
+        versionCode 2025071101
+        versionName "1.1.8"
     }
 
     signingConfigs {
         release {
             // CI 构建使用 android-ci/ci.keystore（已提交到仓库）
-            // 本地构建回退到 android/android.keystore
             def ciKeystore = file('../../android-ci/ci.keystore')
             if (ciKeystore.exists()) {
                 storeFile ciKeystore

@@ -369,11 +369,12 @@ function WikiView({ kbId }) {
   const outLinks = Array.isArray(pageDetail?.out_links) ? pageDetail.out_links : [];
   const inLinks = Array.isArray(pageDetail?.in_links) ? pageDetail.in_links : [];
 
-  // 渲染 Markdown 链接的自定义组件 - 使用 <button> 确保可点击
+  // 渲染 Markdown 链接的自定义组件 - 使用 <span> + onClick 确保可点击
   const renderMarkdownLink = useCallback(({ href, children }) => {
     const handleClick = (e) => {
       e.preventDefault();
       e.stopPropagation();
+      console.log('Link clicked:', href);
       if (href && href.startsWith('wiki:')) {
         openWikiRef(href.slice(5));
       } else if (href && /^https?:\/\//i.test(href)) {
@@ -384,21 +385,20 @@ function WikiView({ kbId }) {
       }
     };
     return (
-      <button
+      <span
         className="wiki-link"
         onClick={handleClick}
-        type="button"
+        onTouchEnd={handleClick}
+        role="link"
+        tabIndex={0}
         style={{
           cursor: 'pointer',
           color: '#2563eb',
           textDecoration: 'underline',
-          background: 'none',
-          border: 'none',
-          padding: 0,
-          font: 'inherit',
-          display: 'inline'
+          userSelect: 'none',
+          WebkitUserSelect: 'none'
         }}
-      >{children}</button>
+      >{children}</span>
     );
   }, [openWikiRef, extractWikiSlug]);
 
