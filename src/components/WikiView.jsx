@@ -59,20 +59,16 @@ function getMediaBaseUrl() {
   if (cfg.baseUrl && /^https?:\/\//i.test(cfg.baseUrl)) {
     return cfg.baseUrl.replace(/\/$/, '');
   }
-  // WebView file:// 环境下 window.location.origin 是空串，不能依赖
+  // 使用 getBaseUrl() 获取 API 地址
   const base = getBaseUrl();
   if (base && /^https?:\/\//i.test(base)) return base;
-  // 兜底：如果 baseUrl 是相对路径，尝试拼接
+  // 兜底：如果 baseUrl 是相对路径
   if (cfg.baseUrl && typeof cfg.baseUrl === 'string') {
     const rel = cfg.baseUrl.replace(/\/$/, '');
-    if (rel.startsWith('/')) {
-      // 相对路径，需要知道当前页面协议+域名
-      // WebView 中从 file:// 加载时无法确定，返回空让调用方处理
-      return '';
-    }
-    return rel;
+    if (!rel.startsWith('/')) return rel;
   }
-  return '';
+  // 最后兜底：使用 localhost（开发环境）
+  return 'http://localhost:8080';
 }
 
 function resolveUrl(url) {
@@ -83,10 +79,6 @@ function resolveUrl(url) {
   // 保留 data: / blob: 等 scheme
   if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return url;
   const base = getMediaBaseUrl();
-  if (!base) {
-    // 无法解析 base，返回原 URL（可能在 WebView 中通过拦截处理）
-    return url;
-  }
   if (url.startsWith('/')) return `${base}${url}`;
   return `${base}/${url}`;
 }
