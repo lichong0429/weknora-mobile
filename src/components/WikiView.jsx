@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
 import { Wiki } from '../api/endpoints.js';
-import { get } from '../api/client.js';
+import { get, getBlob } from '../api/client.js';
 import { getBaseUrl, getConfig } from '../config.js';
 import {
   BookOpen, Search, Loader2, AlertCircle, FileText, Folder, ChevronRight,
@@ -25,6 +25,8 @@ const PAGE_TYPE_LABELS = {
   comparison: '对比'
 };
 const PAGE_SIZE = 20;
+// 1x1 透明 gif，用作图片加载前的占位骨架，避免布局跳动
+const PLACEHOLDER_BLOB = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
 // 分层 slug（如 entity/tencent）按段编码，避免把 "/" 也转义
 function encodeSlugPath(slug) {
@@ -82,17 +84,99 @@ function resolveUrl(url) {
   if (/^https?:\/\//i.test(url)) return url;
   // 保留 data: / blob: 等 scheme
   if (/^[a-z][a-z0-9+.-]*:/i.test(url) && !url.startsWith('local://')) return url;
-  
+
   const base = getMediaBaseUrl();
-  
+
   // 处理 local:// 格式的内部文件路径
   if (url.startsWith('local://')) {
     // 转换成 /api/v1/files?file_path=local://... 格式
     return `${base}/api/v1/files?file_path=${encodeURIComponent(url)}`;
   }
-  
+
   if (url.startsWith('/')) return `${base}${url}`;
   return `${base}/${url}`;
+}
+
+// 检测 src 是否需要走认证代理（local:// 等 scheme）
+function isAuthProtectedSrc(src) {
+  return typeof src === 'string' && /^(local|minio|cos|tos|s3|oss|ks3|obs):\/\//i.test(src.trim());
+}
+
+// 已 hydrated 的图片缓存（避免重复请求）
+const hydratedBlobCache = new Map();
+
+// 自定义 Markdown 图片组件
+// 对于 local:// 等需要认证的 scheme，通过 /api/v1/files?file_path= 代理 fetch blob，
+// 转换为 blob: URL 赋给 <img src>（因为 <img> 无法附加 X-API-Key 等自定义 header）
+function MarkdownImage({ src, alt, title }) {
+  const [resolvedSrc, setResolvedSrc] = useState(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!src) {
+      setFailed(true);
+      return undefined;
+    }
+
+    // 已经是 HTTP/HTTPS/data/blob/相对路径 —— 直接走 resolveUrl
+    if (!isAuthProtectedSrc(src)) {
+      setResolvedSrc(resolveUrl(src));
+      setFailed(false);
+      return undefined;
+    }
+
+    // 需要认证的 scheme：fetch → blob URL
+    const cached = hydratedBlobCache.get(src);
+    if (cached) {
+      setResolvedSrc(cached);
+      setFailed(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    let createdBlobUrl = null;
+    (async () => {
+      try {
+        const blob = await getBlob('/files', { file_path: src });
+        if (cancelled) return;
+        createdBlobUrl = URL.createObjectURL(blob);
+        hydratedBlobCache.set(src, createdBlobUrl);
+        setResolvedSrc(createdBlobUrl);
+        setFailed(false);
+      } catch (err) {
+        if (!cancelled) setFailed(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      // 注意：blob URL 缓存后会被复用，不要 revoke，下次直接复用
+    };
+  }, [src]);
+
+  if (failed) {
+    return (
+      <span className="my-2 inline-block rounded-lg bg-gray-100 px-3 py-2 text-xs text-gray-500">
+        [图片加载失败]
+      </span>
+    );
+  }
+  if (!resolvedSrc) {
+    return (
+      <span
+        className="my-2 inline-block animate-pulse rounded-lg bg-gray-100"
+        style={{ minWidth: 120, minHeight: 80 }}
+      />
+    );
+  }
+  return (
+    <img
+      src={resolvedSrc}
+      alt={alt || ''}
+      title={title}
+      loading="lazy"
+      className="my-2 max-w-full rounded-lg"
+    />
+  );
 }
 
 function resolveMediaUrls(html) {
@@ -310,25 +394,80 @@ function WikiView({ kbId }) {
   }, [findPageByRef, handleOpenPage]);
 
   const extractWikiSlug = useCallback((raw) => {
-    if (!raw || typeof raw !== 'string') return '';
-    const href = raw.trim();
-    if (href.startsWith('wiki:')) return href.slice(5).trim();
-    let path = href.split('?')[0].split('#')[0];
-    const kbWikiMatch = path.match(/\/knowledge-bases\/[^/]+\/wiki\/(?:pages|page)\/(.+)/i);
-    if (kbWikiMatch) return decodeURIComponent(kbWikiMatch[1].replace(/^\/+|\/+$/g, ''));
-    const wikiMatch = path.match(/\/wiki\/(.+)/i);
-    if (wikiMatch) return decodeURIComponent(wikiMatch[1].replace(/^\/+|\/+$/g, ''));
-    if (!/^https?:\/\//i.test(href) && !href.startsWith('//') && path) {
-      return decodeURIComponent(path.split('/').pop().replace(/^\/+|\/+$/g, ''));
-    }
-    return '';
-  }, []);
+      if (!raw || typeof raw !== 'string') return '';
+      const href = raw.trim();
+      if (href.startsWith('wiki:')) return href.slice(5).trim();
+      let path = href.split('?')[0].split('#')[0];
+      const kbWikiMatch = path.match(/\/knowledge-bases\/[^/]+\/wiki\/(?:pages|page)\/(.+)/i);
+      if (kbWikiMatch) return decodeURIComponent(kbWikiMatch[1].replace(/^\/+|\/+$/g, ''));
+      const wikiMatch = path.match(/\/wiki\/(.+)/i);
+      if (wikiMatch) return decodeURIComponent(wikiMatch[1].replace(/^\/+|\/+$/g, ''));
+      if (!/^https?:\/\//i.test(href) && !href.startsWith('//') && path) {
+        return decodeURIComponent(path.split('/').pop().replace(/^\/+|\/+$/g, ''));
+      }
+      return '';
+    }, []);
+
+  // 用于 hydrate HTML 渲染路径里的 local:// 图片（dangerouslySetInnerHTML 渲染出的
+  // <img> 没法走 React 的 MarkdownImage 组件，所以手动扫 DOM 走 blob 代理）
+  const mdBodyRef = useRef(null);
+  useEffect(() => {
+    const root = mdBodyRef.current;
+    if (!root || !pageContent) return undefined;
+    if (!isHtml) return undefined; // Markdown 路径由 MarkdownImage 组件自己处理
+
+    const imgs = Array.from(root.querySelectorAll('img'));
+    const targets = imgs.filter((img) => {
+      const src = (img.getAttribute('src') || '').trim();
+      if (!src) return false;
+      return src.includes('/files?file_path=') || isAuthProtectedSrc(src);
+    });
+    if (targets.length === 0) return undefined;
+
+    let cancelled = false;
+    (async () => {
+      await Promise.all(targets.map(async (img) => {
+        const src = (img.getAttribute('src') || '').trim();
+        // 还原成原始的 local://xxx（resolveMediaUrls 已经把它改成 /api/v1/files?file_path=local://... 了）
+        let filePath = src;
+        try {
+          const u = new URL(src, window.location.origin);
+          const fp = u.searchParams.get('file_path');
+          if (fp) filePath = fp;
+        } catch {}
+
+        // 先放占位骨架，避免布局跳动
+        img.setAttribute('src', PLACEHOLDER_BLOB);
+
+        const cached = hydratedBlobCache.get(filePath);
+        if (cached) {
+          if (cancelled) return;
+          img.src = cached;
+          return;
+        }
+        try {
+          const blob = await getBlob('/files', { file_path: filePath });
+          if (cancelled) return;
+          const blobUrl = URL.createObjectURL(blob);
+          hydratedBlobCache.set(filePath, blobUrl);
+          img.src = blobUrl;
+        } catch {
+          if (cancelled) return;
+          img.replaceWith(Object.assign(document.createElement('span'), {
+            className: 'my-2 inline-block rounded-lg bg-gray-100 px-3 py-2 text-xs text-gray-500',
+            textContent: '[图片加载失败]',
+          }));
+        }
+      }));
+    })();
+    return () => { cancelled = true; };
+  }, [pageContent, isHtml]);
 
   // 处理内容中的链接点击 - 事件委托方式，模仿网页版实现
   const handleContentClick = useCallback((e) => {
-    // 检查是否点击了 wiki 链接（span 方式）
-    const linkEl = e.target.closest('.wiki-content-link');
-    if (linkEl) {
+  // 检查是否点击了 wiki 链接（span 方式）
+  const linkEl = e.target.closest('.wiki-content-link');
+  if (linkEl) {
       e.preventDefault();
       e.stopPropagation();
       const slug = linkEl.getAttribute('data-slug');
@@ -451,7 +590,7 @@ function WikiView({ kbId }) {
                 </div>
               ) : pageContent ? (
                 <>
-                  <div className="md-body" onClick={handleContentClick}>
+                  <div className="md-body" ref={mdBodyRef} onClick={handleContentClick}>
                     {isHtml ? (
                       <div dangerouslySetInnerHTML={{ __html: cleanHtml(resolveMediaUrls(preprocessWikiLinksHtml(pageContent))) }} />
                     ) : (
@@ -459,15 +598,7 @@ function WikiView({ kbId }) {
                         remarkPlugins={[remarkGfm, remarkMath]}
                         rehypePlugins={[rehypeKatex, rehypeRaw]}
                         components={{
-                          img: ({ src, alt, title }) => (
-                            <img
-                              src={resolveUrl(src)}
-                              alt={alt || ''}
-                              title={title}
-                              loading="lazy"
-                              className="max-w-full rounded-lg"
-                            />
-                          )
+                          img: MarkdownImage
                         }}
                       >{mdSource}</ReactMarkdown>
                     )}

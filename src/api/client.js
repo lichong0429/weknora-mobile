@@ -106,6 +106,27 @@ export async function getText(path, params = {}) {
   }
 }
 
+// 获取文件 blob（用于图片等二进制资源）
+export async function getBlob(path, params = {}) {
+  const url = new URL(buildUrl(path), window.location.origin);
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
+  });
+  const headers = { ...getHeaders(false), Accept: '*/*' };
+
+  try {
+    const res = await fetch(url.toString(), { headers });
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { const body = await res.json(); msg = body.error?.message || body.message || msg; } catch {}
+      throw new Error(msg);
+    }
+    return await res.blob();
+  } catch (err) {
+    throw err;
+  }
+}
+
 export async function post(path, body = {}, signal = null) {
   return request('POST', path, body, signal);
 }
