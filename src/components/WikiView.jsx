@@ -46,14 +46,14 @@ function preprocessWikiLinks(text) {
   });
 }
 
-// 将 HTML 正文里的 [[slug|Title]] 维基语法转换为可点击的 <a class="wiki-link" data-wiki-ref>
+// 将 HTML 正文里的 [[slug|Title]] 维基语法转换为可点击的 <span>
 function preprocessWikiLinksHtml(html) {
   if (typeof html !== 'string') return '';
   return html.replace(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g, (m, slug, title) => {
     const s = String(slug).trim().replace(/"/g, '&quot;');
     const t = (title && title.trim()) || String(slug).trim();
     if (!s) return m;
-    return `<a class="wiki-link" data-wiki-ref="${s}" href="javascript:void(0)">${t}</a>`;
+    return `<span class="wiki-content-link" data-slug="${s}" style="color:#2563eb;text-decoration:underline;cursor:pointer;">${t}</span>`;
   });
 }
 
@@ -326,7 +326,7 @@ function WikiView({ kbId }) {
 
   // 处理内容中的链接点击 - 事件委托方式，模仿网页版实现
   const handleContentClick = useCallback((e) => {
-    // 检查是否点击了 wiki 链接
+    // 检查是否点击了 wiki 链接（span 方式）
     const linkEl = e.target.closest('.wiki-content-link');
     if (linkEl) {
       e.preventDefault();
@@ -335,6 +335,17 @@ function WikiView({ kbId }) {
       if (slug) {
         openWikiRef(slug);
       }
+      return;
+    }
+    
+    // 检查是否点击了 HTML 中标记的 wiki 链接（data-wiki-href）
+    const wikiLinkEl = e.target.closest('[data-wiki-href]');
+    if (wikiLinkEl) {
+      e.preventDefault();
+      e.stopPropagation();
+      const href = wikiLinkEl.getAttribute('data-wiki-href') || '';
+      const slug = extractWikiSlug(href);
+      if (slug) openWikiRef(slug);
       return;
     }
     
