@@ -36,6 +36,11 @@ public class MainActivity extends AppCompatActivity {
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
                 
+                // 拦截锚点跳转（#），防止页面刷新或跳转到主页
+                if (url.contains("#") && !url.contains("#/")) {
+                    return true; // 阻止 WebView 处理纯锚点
+                }
+                
                 // 处理 wiki: 协议链接（React Router 内部跳转）
                 if (url.startsWith("wiki:")) {
                     // 让 WebView 内部处理，通过 JavaScript 桥接通知 React

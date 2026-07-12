@@ -32,16 +32,17 @@ function encodeSlugPath(slug) {
   return String(slug).split('/').map(encodeURIComponent).join('/');
 }
 
-// 将 WeKnora 维基语法 [[slug]] / [[slug|Title]] 转换为原始 HTML <a> 标签
-// 这样 ReactMarkdown 配合 rehype-raw 可以保留这些标签，事件委托统一处理点击
+// 将 WeKnora 维基语法 [[slug]] / [[slug|Title]] 转换为原始 HTML <span> 标签
+// 使用 <span> 避免 WebView 对 <a> 标签的特殊处理（拦截、跳转等）
 function preprocessWikiLinks(text) {
   if (typeof text !== 'string') return '';
   return text.replace(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g, (m, slug, title) => {
     const s = String(slug).trim();
     const t = (title && title.trim()) || s;
     if (!s) return m;
-    // 生成原始 HTML <a> 标签，模仿网页版 wiki-content-link 类名
-    return `<a href="#" class="wiki-content-link" data-slug="${s.replace(/"/g, '&quot;')}" onclick="event.preventDefault(); event.stopPropagation();">${t}</a>`;
+    // 生成 <span> 标签，模仿网页版 wiki-content-link 类名
+    // 使用 span 而不是 a，避免 WebView 拦截链接点击
+    return `<span class="wiki-content-link" data-slug="${s.replace(/"/g, '&quot;')}" style="color:#2563eb;text-decoration:underline;cursor:pointer;">${t}</span>`;
   });
 }
 
