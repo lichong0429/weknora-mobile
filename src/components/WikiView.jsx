@@ -74,11 +74,19 @@ function getMediaBaseUrl() {
 function resolveUrl(url) {
   if (!url || typeof url !== 'string') return url;
   url = url.trim();
-  // 已经是绝对地址
-  if (/^(https?:)?\/\//i.test(url)) return url;
+  // 已经是 HTTP/HTTPS 绝对地址
+  if (/^https?:\/\//i.test(url)) return url;
   // 保留 data: / blob: 等 scheme
-  if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return url;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url) && !url.startsWith('local://')) return url;
+  
   const base = getMediaBaseUrl();
+  
+  // 处理 local:// 格式的内部文件路径
+  if (url.startsWith('local://')) {
+    // 转换成 /api/v1/files?file_path=local://... 格式
+    return `${base}/api/v1/files?file_path=${encodeURIComponent(url)}`;
+  }
+  
   if (url.startsWith('/')) return `${base}${url}`;
   return `${base}/${url}`;
 }
@@ -330,15 +338,21 @@ function WikiView({ kbId }) {
 
   // 处理 HTML 内容中的链接点击（通过 dangerouslySetInnerHTML 渲染的内容）
   const handleHtmlClick = useCallback((e) => {
-    // 处理 <button class="wiki-link">（ReactMarkdown 渲染的链接）
-    const btnEl = e.target.closest('button.wiki-link');
-    if (btnEl) {
-      // button 有自己的 onClick，不需要在这里处理
+    // 处理 <a> 标签（包括 ReactMarkdown 渲染的链接和 HTML 内容中的链接）
+    const el = e.target.closest('a[data-wiki-ref], a[data-wiki-href], a.wiki-link, a[href*="/wiki/"], a[href*="/knowledge-bases/"]');
+    if (!el) {
+      // 检查是否是图片点击
+      const imgEl = e.target.closest('img');
+      if (imgEl) {
+        // 图片点击处理（可选：预览图片）
+        const src = imgEl.getAttribute('src');
+        if (src) {
+          // 可以在这里添加图片预览逻辑
+          console.log('Image clicked:', src);
+        }
+      }
       return;
     }
-    // 处理 <a> 标签（HTML 内容中的链接）
-    const el = e.target.closest('a[data-wiki-ref], a[data-wiki-href], a.wiki-link, a[href*="/wiki/"], a[href*="/knowledge-bases/"]');
-    if (!el) return;
     e.preventDefault();
     e.stopPropagation();
     const ref = el.getAttribute('data-wiki-ref');
@@ -369,7 +383,7 @@ function WikiView({ kbId }) {
   const outLinks = Array.isArray(pageDetail?.out_links) ? pageDetail.out_links : [];
   const inLinks = Array.isArray(pageDetail?.in_links) ? pageDetail.in_links : [];
 
-  // 渲染 Markdown 链接的自定义组件 - 使用 <button> 确保可点击
+  // 渲染 Markdown 链接的自定义组件 - 使用 <a> 标签，href 设为 javascript:void(0) 避免 WebView 跳转
   const renderMarkdownLink = useCallback(({ href, children }) => {
     const handleClick = (e) => {
       e.preventDefault();
@@ -384,23 +398,19 @@ function WikiView({ kbId }) {
       }
     };
     return (
-      <button
+      <a
+        href="javascript:void(0)"
         className="wiki-link"
         onClick={handleClick}
         role="link"
-        tabIndex={0}
         style={{
           cursor: 'pointer',
           color: '#2563eb',
           textDecoration: 'underline',
           userSelect: 'none',
-          WebkitUserSelect: 'none',
-          background: 'none',
-          border: 'none',
-          padding: 0,
-          font: 'inherit'
+          WebkitUserSelect: 'none'
         }}
-      >{children}</button>
+      >{children}</a>
     );
   }, [openWikiRef, extractWikiSlug]);
 
