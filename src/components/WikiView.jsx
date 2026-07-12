@@ -55,12 +55,12 @@ function preprocessWikiLinksHtml(html) {
 
 function getMediaBaseUrl() {
   const cfg = getConfig();
-  // 优先使用用户配置的绝对地址
+  // 优先使用用户配置的绝对地址（去掉末尾斜杠）
   if (cfg.baseUrl && /^https?:\/\//i.test(cfg.baseUrl)) {
     return cfg.baseUrl.replace(/\/$/, '');
   }
-  // 使用 getBaseUrl() 获取 API 地址
-  const base = getBaseUrl();
+  // 使用 getBaseUrl() 获取 API 地址，但要去掉 /api/v1 后缀得到真正的 base URL
+  const base = getBaseUrl().replace(/\/api\/v1\/?$/, '').replace(/\/$/, '');
   if (base && /^https?:\/\//i.test(base)) return base;
   // 兜底：如果 baseUrl 是相对路径
   if (cfg.baseUrl && typeof cfg.baseUrl === 'string') {
@@ -337,7 +337,7 @@ function WikiView({ kbId }) {
       return;
     }
     // 处理 <a> 标签（HTML 内容中的链接）
-    const el = e.target.closest('a[data-wiki-ref], a[data-wiki-href], a.wiki-link');
+    const el = e.target.closest('a[data-wiki-ref], a[data-wiki-href], a.wiki-link, a[href*="/wiki/"], a[href*="/knowledge-bases/"]');
     if (!el) return;
     e.preventDefault();
     e.stopPropagation();
@@ -369,12 +369,11 @@ function WikiView({ kbId }) {
   const outLinks = Array.isArray(pageDetail?.out_links) ? pageDetail.out_links : [];
   const inLinks = Array.isArray(pageDetail?.in_links) ? pageDetail.in_links : [];
 
-  // 渲染 Markdown 链接的自定义组件 - 使用 <span> + onClick 确保可点击
+  // 渲染 Markdown 链接的自定义组件 - 使用 <button> 确保可点击
   const renderMarkdownLink = useCallback(({ href, children }) => {
     const handleClick = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      console.log('Link clicked:', href);
       if (href && href.startsWith('wiki:')) {
         openWikiRef(href.slice(5));
       } else if (href && /^https?:\/\//i.test(href)) {
@@ -385,10 +384,9 @@ function WikiView({ kbId }) {
       }
     };
     return (
-      <span
+      <button
         className="wiki-link"
         onClick={handleClick}
-        onTouchEnd={handleClick}
         role="link"
         tabIndex={0}
         style={{
@@ -396,9 +394,13 @@ function WikiView({ kbId }) {
           color: '#2563eb',
           textDecoration: 'underline',
           userSelect: 'none',
-          WebkitUserSelect: 'none'
+          WebkitUserSelect: 'none',
+          background: 'none',
+          border: 'none',
+          padding: 0,
+          font: 'inherit'
         }}
-      >{children}</span>
+      >{children}</button>
     );
   }, [openWikiRef, extractWikiSlug]);
 
