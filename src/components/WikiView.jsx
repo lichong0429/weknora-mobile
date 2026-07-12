@@ -13,6 +13,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
+import rehypeRaw from 'rehype-raw';
 import 'katex/dist/katex.min.css';
 
 const PAGE_TYPE_ORDER = ['summary', 'entity', 'concept', 'synthesis', 'comparison'];
@@ -31,14 +32,16 @@ function encodeSlugPath(slug) {
   return String(slug).split('/').map(encodeURIComponent).join('/');
 }
 
-// 将 WeKnora 维基语法 [[slug]] / [[slug|Title]] 转换为 Markdown 链接 [Title](wiki:slug)
+// 将 WeKnora 维基语法 [[slug]] / [[slug|Title]] 转换为原始 HTML <a> 标签
+// 这样 ReactMarkdown 配合 rehype-raw 可以保留这些标签，事件委托统一处理点击
 function preprocessWikiLinks(text) {
   if (typeof text !== 'string') return '';
   return text.replace(/\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]/g, (m, slug, title) => {
     const s = String(slug).trim();
     const t = (title && title.trim()) || s;
     if (!s) return m;
-    return `[${t}](wiki:${s})`;
+    // 生成原始 HTML <a> 标签，模仿网页版 wiki-content-link 类名
+    return `<a href="#" class="wiki-content-link" data-slug="${s.replace(/"/g, '&quot;')}" onclick="event.preventDefault(); event.stopPropagation();">${t}</a>`;
   });
 }
 
@@ -320,50 +323,49 @@ function WikiView({ kbId }) {
     return '';
   }, []);
 
-  // 统一处理链接点击：供 ReactMarkdown 自定义组件和 HTML 内容使用
-  const handleLinkClick = useCallback((e, href) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (href && href.startsWith('wiki:')) {
-      openWikiRef(href.slice(5));
-      return;
-    }
-    if (href && /^https?:\/\//i.test(href)) {
-      window.open(href, '_blank');
-      return;
-    }
-    const slug = extractWikiSlug(href);
-    if (slug) openWikiRef(slug);
-  }, [openWikiRef, extractWikiSlug]);
-
-  // 处理 HTML 内容中的链接点击（通过 dangerouslySetInnerHTML 渲染的内容）
-  const handleHtmlClick = useCallback((e) => {
-    // 处理 <a> 标签（包括 ReactMarkdown 渲染的链接和 HTML 内容中的链接）
-    const el = e.target.closest('a[data-wiki-ref], a[data-wiki-href], a.wiki-link, a[href*="/wiki/"], a[href*="/knowledge-bases/"]');
-    if (!el) {
-      // 检查是否是图片点击
-      const imgEl = e.target.closest('img');
-      if (imgEl) {
-        // 图片点击处理（可选：预览图片）
-        const src = imgEl.getAttribute('src');
-        if (src) {
-          // 可以在这里添加图片预览逻辑
-          console.log('Image clicked:', src);
-        }
+  // 处理内容中的链接点击 - 事件委托方式，模仿网页版实现
+  const handleContentClick = useCallback((e) => {
+    // 检查是否点击了 wiki 链接
+    const linkEl = e.target.closest('.wiki-content-link');
+    if (linkEl) {
+      e.preventDefault();
+      e.stopPropagation();
+      const slug = linkEl.getAttribute('data-slug');
+      if (slug) {
+        openWikiRef(slug);
       }
       return;
     }
-    e.preventDefault();
-    e.stopPropagation();
-    const ref = el.getAttribute('data-wiki-ref');
-    if (ref) { openWikiRef(ref); return; }
-    const href = el.getAttribute('data-wiki-href') || el.getAttribute('href') || '';
-    if (href && /^https?:\/\//i.test(href) && !href.includes('/wiki/') && !href.includes('/knowledge-bases/')) {
-      window.open(href, '_blank');
-      return;
+    
+    // 检查是否点击了普通链接
+    const aEl = e.target.closest('a[href]');
+    if (aEl) {
+      const href = aEl.getAttribute('href') || '';
+      // 如果是外部链接，在新窗口打开
+      if (/^https?:\/\//i.test(href)) {
+        e.preventDefault();
+        e.stopPropagation();
+        window.open(href, '_blank');
+        return;
+      }
+      // 如果是 wiki 相关链接
+      if (href.includes('/wiki/') || href.includes('/knowledge-bases/')) {
+        e.preventDefault();
+        e.stopPropagation();
+        const slug = extractWikiSlug(href);
+        if (slug) openWikiRef(slug);
+        return;
+      }
     }
-    const slug = extractWikiSlug(href);
-    if (slug) openWikiRef(slug);
+    
+    // 检查是否点击了图片
+    const imgEl = e.target.closest('img');
+    if (imgEl) {
+      const src = imgEl.getAttribute('src');
+      if (src) {
+        console.log('Image clicked:', src);
+      }
+    }
   }, [openWikiRef, extractWikiSlug]);
 
   const grouped = groupByType(pages);
@@ -382,37 +384,6 @@ function WikiView({ kbId }) {
 
   const outLinks = Array.isArray(pageDetail?.out_links) ? pageDetail.out_links : [];
   const inLinks = Array.isArray(pageDetail?.in_links) ? pageDetail.in_links : [];
-
-  // 渲染 Markdown 链接的自定义组件 - 使用 <a> 标签，href 设为 javascript:void(0) 避免 WebView 跳转
-  const renderMarkdownLink = useCallback(({ href, children }) => {
-    const handleClick = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (href && href.startsWith('wiki:')) {
-        openWikiRef(href.slice(5));
-      } else if (href && /^https?:\/\//i.test(href)) {
-        window.open(href, '_blank');
-      } else {
-        const slug = extractWikiSlug(href);
-        if (slug) openWikiRef(slug);
-      }
-    };
-    return (
-      <a
-        href="javascript:void(0)"
-        className="wiki-link"
-        onClick={handleClick}
-        role="link"
-        style={{
-          cursor: 'pointer',
-          color: '#2563eb',
-          textDecoration: 'underline',
-          userSelect: 'none',
-          WebkitUserSelect: 'none'
-        }}
-      >{children}</a>
-    );
-  }, [openWikiRef, extractWikiSlug]);
 
   if (selectedPage) {
     const isHtml = isHtmlContent(pageContent);
@@ -468,15 +439,14 @@ function WikiView({ kbId }) {
                 </div>
               ) : pageContent ? (
                 <>
-                  <div className="md-body" onClick={handleHtmlClick}>
+                  <div className="md-body" onClick={handleContentClick}>
                     {isHtml ? (
                       <div dangerouslySetInnerHTML={{ __html: cleanHtml(resolveMediaUrls(preprocessWikiLinksHtml(pageContent))) }} />
                     ) : (
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm, remarkMath]}
-                        rehypePlugins={[rehypeKatex]}
+                        rehypePlugins={[rehypeKatex, rehypeRaw]}
                         components={{
-                          a: renderMarkdownLink,
                           img: ({ src, alt, title }) => (
                             <img
                               src={resolveUrl(src)}
