@@ -10,8 +10,8 @@ android {
         applicationId "com.weknora.mobile"
         minSdk 24
         targetSdk 36
-        versionCode 2026080718
-        versionName "1.2.1"
+        versionCode 2026080720
+        versionName "1.2.2"
     }
 
     signingConfigs {

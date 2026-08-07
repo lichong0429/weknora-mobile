@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
-const APP_VERSION = 'v1.2.1';
+const APP_VERSION = 'v1.2.2';
 
 function extractList(result) {
   if (Array.isArray(result)) return result;

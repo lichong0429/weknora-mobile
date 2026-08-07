@@ -318,11 +318,11 @@ function KnowledgeDetail() {
               <div className="space-y-3">
                 {isHtml ? (
                   <div
-                    className="prose prose-sm max-w-none text-sm text-gray-700 overflow-x-auto"
+                    className="prose prose-sm max-w-none max-h-96 overflow-y-auto text-sm text-gray-700"
                     dangerouslySetInnerHTML={{ __html: cleanHtml(displayPreview) }}
                   />
                 ) : (
-                  <div className="prose prose-sm max-w-none text-sm text-gray-700">
+                  <div className="prose prose-sm max-w-none max-h-96 overflow-y-auto text-sm text-gray-700">
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayPreview}</ReactMarkdown>
                   </div>
                 )}
@@ -340,7 +340,11 @@ function KnowledgeDetail() {
                 )}
               </div>
             ) : (
-              <div className="py-8 text-center text-sm text-gray-400">暂无预览内容</div>
+              <div className="py-6 text-center">
+                <FileText className="mx-auto mb-2 h-8 w-8 text-gray-300" />
+                <p className="text-sm text-gray-500">暂无预览内容</p>
+                <p className="mt-1 text-xs text-gray-400">该文档可能尚未解析完成，或后端未提供预览接口</p>
+              </div>
             )}
           </div>
         </>
@@ -351,12 +355,12 @@ function KnowledgeDetail() {
 
 function extractPreviewText(data) {
   if (!data) return '';
-  if (typeof data === 'string') return data;
+  if (typeof data === 'string') return data.trim();
   const candidates = [data.content, data.text, data.preview, data.body, data.markdown, data.html, data.answer, data.document];
   for (const c of candidates) {
-    if (typeof c === 'string') return c;
+    if (typeof c === 'string' && c.trim().length > 0) return c;
   }
-  return JSON.stringify(data, null, 2);
+  return '';
 }
 
 function isHtmlContent(text) {

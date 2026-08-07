@@ -616,7 +616,18 @@ function WikiView({ kbId }) {
                   )}
                 </>
               ) : (
-                <div className="py-8 text-center text-sm text-gray-400">暂无内容</div>
+                <div className="py-6 text-center">
+                  <BookOpen className="mx-auto mb-2 h-10 w-10 text-gray-300" />
+                  <p className="text-sm text-gray-500">暂无内容</p>
+                  <p className="mt-1 text-xs text-gray-400">
+                    该 Wiki 页面可能尚未生成，或后端返回的字段格式不包含 content/text/markdown/html
+                  </p>
+                  {showPageDebug && pageLoadErrors.length > 0 && (
+                    <div className="mt-3 text-left">
+                      <p className="text-xs font-semibold text-gray-600">接口尝试记录（点上方调试按钮重新打开）</p>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>
