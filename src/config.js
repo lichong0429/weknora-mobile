@@ -14,12 +14,10 @@ export function setConfig(cfg) {
 
 export function getBaseUrl() {
   const cfg = getConfig();
-  if (cfg.useProxy) return '';
   return (cfg.baseUrl || 'http://localhost:8080').replace(/\/$/, '');
 }
 
 export function getApiKey() {
   const cfg = getConfig();
-  if (cfg.useProxy) return '';
   return cfg.apiKey || '';
 }

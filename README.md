@@ -95,6 +95,4 @@ export PATH="$JAVA_HOME/bin:$PATH"
 
 ## 注意事项
 
-- 设置页面中的「使用代理服务器」仅在本地运行 `npm run start`（代理服务器）时有效。
-- 在 CloudStudio 等静态托管环境直接部署 PWA 时，请关闭「使用代理服务器」。
 - 系统信息页面依赖 `/system/info` 接口，若接口不存在会显示空状态。

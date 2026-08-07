@@ -1,7 +1,7 @@
 apply plugin: 'com.android.application'
 
-// 版本号固定为 1.1.8，每次 Release 手动更新这里
-// versionCode 使用 2025071101 格式（年月日时）确保递增
+// 版本号每次 Release 手动更新这里
+// versionCode 使用 YYYYMMDDHH 格式（年月日时）确保递增
 android {
     namespace 'com.weknora.mobile'
     compileSdk 36
@@ -10,8 +10,8 @@ android {
         applicationId "com.weknora.mobile"
         minSdk 24
         targetSdk 36
-        versionCode 2025071202
-        versionName "1.1.92"
+        versionCode 2026080718
+        versionName "1.2.1"
     }
 
     signingConfigs {

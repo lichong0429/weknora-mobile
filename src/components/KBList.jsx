@@ -18,7 +18,7 @@ function KBList() {
   const [activeKb, setActiveKb] = useState(null);
   const { data, loading, error, run, setData } = useAsync(
     () => KB.list(),
-    [config.baseUrl, config.apiKey, config.useProxy]
+    [config.baseUrl, config.apiKey]
   );
 
   const kbs = extractList(data);
