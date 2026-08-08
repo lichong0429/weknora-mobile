@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
 import { Knowledge } from '../api/endpoints.js';
 import { get } from '../api/client.js';
+import { getBaseUrl } from '../config.js';
 import { Loader2, AlertCircle, Trash2, RefreshCw, XCircle, Save, ArrowLeft, ChevronDown, ChevronUp, FileText } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -29,6 +30,9 @@ function KnowledgeDetail() {
   const [previewDebug, setPreviewDebug] = useState([]);
   const [showPreviewDebug, setShowPreviewDebug] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  // 后端 /knowledge/{id}/preview 对 PDF/图片等二进制文件直接流回原文件，
+  // 这里存的是检测到的文件类型 + 原始文本（用来看"调试信息"面板用）
+  const [binaryKind, setBinaryKind] = useState(null);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -51,6 +55,7 @@ function KnowledgeDetail() {
     setPreviewError(null);
     setPreviewDebug([]);
     setExpanded(false);
+    setBinaryKind(null);
     const attempts = [];
 
     try {
@@ -64,10 +69,21 @@ function KnowledgeDetail() {
         return;
       }
 
-      // 2. 文本 preview 接口
+      // 2. 文本 preview 接口（直接读 body 当文本）
       try {
         const text = await withTimeout(Knowledge.preview(id), PREVIEW_TIMEOUT_MS);
+        // 后端 /knowledge/{id}/preview 对 PDF/图片等二进制文件直接流回原文件，
+        // getText 会拿到一段乱码或被截断的文本，需要先检测再决定怎么显示
         if (text && text.trim().length > 0) {
+          const kind = detectBinaryKind(text);
+          if (kind) {
+            // 二进制文件：单独存起来，让渲染层显示下载/外链提示
+            attempts.push({ source: 'GET /knowledge/{id}/preview (binary)', ok: true, status: kind });
+            setBinaryKind({ kind, rawText: text });
+            setPreviewDebug(attempts);
+            setPreviewLoading(false);
+            return;
+          }
           attempts.push({ source: 'GET /knowledge/{id}/preview (text)', ok: true, status: 'success' });
           setPreview(text);
           setPreviewDebug(attempts);
@@ -314,6 +330,36 @@ function KnowledgeDetail() {
                   </div>
                 )}
               </div>
+            ) : binaryKind ? (
+              <div className="space-y-3">
+                <div className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
+                  <p className="font-medium">该文件是 {binaryKind.kind} 二进制格式</p>
+                  <p className="mt-1 text-xs">移动端不支持内嵌预览，请用浏览器打开或下载到本地查看。</p>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <a
+                    href={getPreviewFileUrl(id, binaryKind.kind)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-blue-600 px-3 py-2 text-xs font-medium text-white active:scale-95"
+                  >
+                    在浏览器中打开
+                  </a>
+                  <a
+                    href={getPreviewFileUrl(id, binaryKind.kind)}
+                    download
+                    className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-gray-100 px-3 py-2 text-xs font-medium text-gray-700 active:scale-95"
+                  >
+                    下载文件
+                  </a>
+                </div>
+                {showPreviewDebug && binaryKind.rawText && (
+                  <div className="rounded-lg bg-gray-900 p-2 text-xs text-gray-100 break-all">
+                    <p className="mb-1 text-gray-400">原始响应（前 500 字符）：</p>
+                    <pre className="whitespace-pre-wrap">{binaryKind.rawText.slice(0, 500)}</pre>
+                  </div>
+                )}
+              </div>
             ) : preview ? (
               <div className="space-y-3">
                 {isHtml ? (
@@ -370,6 +416,29 @@ function isHtmlContent(text) {
   const hasMarkdown = /^#{1,6}\s|^\s*[-*+]\s|^\s*\d+\.\s|^\[.*\]\(.*\)|^\*\*.*\*\*|^__.*__|^`.*`|^```/m.test(text);
   // 如果包含明显 HTML 标签且不像 Markdown，按 HTML 渲染
   return hasHtmlTags && !hasMarkdown;
+}
+
+// 检测后端 preview 接口返回的 body 是不是二进制文件（PDF/图片等）。
+// 后端 /knowledge/{id}/preview 对 PDF/图片是直接流回原文件的 Content-Type 形式，
+// 但移动端用 getText 拿到的 body 会包含 magic bytes 或不可打印字符。
+function detectBinaryKind(text) {
+  if (typeof text !== 'string' || text.length === 0) return null;
+  const head = text.slice(0, 16);
+  if (head.startsWith('%PDF')) return 'PDF';
+  if (head.startsWith('\x89PNG')) return 'PNG';
+  if (head.startsWith('\xff\xd8\xff')) return 'JPEG';
+  if (head.startsWith('GIF8')) return 'GIF';
+  if (head.startsWith('PK\x03\x04')) return 'ZIP/Office';
+  if (/[\x00-\x08\x0e-\x1f]/.test(text.slice(0, 200))) return '二进制';
+  return null;
+}
+
+// 拼一个能在浏览器里直接打开的预览 URL（带 X-API-Key）
+function getPreviewFileUrl(id, kind) {
+  // 用 getBaseUrl() 拿带 API key 头的 base，再用 URLSearchParams 把 key 拼上去
+  // （浏览器打开外链时拿不到 X-API-Key 头，所以用 query string 形式；后端某些版本会接受）
+  // 退而求其次：返回纯路径，让用户至少能复制到浏览器手动加 header
+  return `${getBaseUrl().replace(/\/api\/v1\/?$/, '')}/api/v1/knowledge/${id}/preview`;
 }
 
 function cleanHtml(html) {

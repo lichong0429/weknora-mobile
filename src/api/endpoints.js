@@ -106,14 +106,17 @@ export const System = {
 };
 
 export const Wiki = {
-  listPages: (kbId, params = {}) => get(`/knowledge-bases/${kbId}/wiki/pages`, params),
+  // 注意：WeKnora 新版本（wechatopenai/weknora-app latest）把 wiki 路由改成了
+  // 单数 `/knowledgebase/{kb_id}/wiki/...`，旧版带连字符的 `/knowledge-bases/` 会 404。
+  // 这里统一用新路径，loadPages / handleOpenPage 里有连字符旧路径作为兜底。
+  listPages: (kbId, params = {}) => get(`/knowledgebase/${kbId}/wiki/pages`, params),
   listFolders: (kbId, parentId = '', pageTypes = '') =>
-    get(`/knowledge-bases/${kbId}/wiki/folders`, { parent_id: parentId, page_types: pageTypes }),
-  getPage: (kbId, slug) => get(`/knowledge-bases/${kbId}/wiki/pages/${encodeURIComponent(slug)}`),
-  getIndex: (kbId, params = {}) => get(`/knowledge-bases/${kbId}/wiki/index`, params),
-  getGraph: (kbId, params = {}) => get(`/knowledge-bases/${kbId}/wiki/graph`, params),
-  getStats: (kbId) => get(`/knowledge-bases/${kbId}/wiki/stats`),
-  searchPages: (kbId, q, limit = 20) => get(`/knowledge-bases/${kbId}/wiki/search`, { q, limit })
+    get(`/knowledgebase/${kbId}/wiki/folders`, { parent_id: parentId, page_types: pageTypes }),
+  getPage: (kbId, slug) => get(`/knowledgebase/${kbId}/wiki/pages/${encodeURIComponent(slug)}`),
+  getIndex: (kbId, params = {}) => get(`/knowledgebase/${kbId}/wiki/index`, params),
+  getGraph: (kbId, params = {}) => get(`/knowledgebase/${kbId}/wiki/graph`, params),
+  getStats: (kbId) => get(`/knowledgebase/${kbId}/wiki/stats`),
+  searchPages: (kbId, q, limit = 20) => get(`/knowledgebase/${kbId}/wiki/search`, { q, limit })
 };
 
 export const Tenant = {

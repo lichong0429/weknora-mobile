@@ -351,13 +351,18 @@ function WikiView({ kbId }) {
     const seg = encodeSlugPath(rawId || rawSlug);
     const lastSeg = String(rawId || rawSlug).split('/').pop();
 
+    // WeKnora 新版本（wechatopenai/weknora-app latest）把 wiki 路由改成了
+    // 单数 `/knowledgebase/{kb_id}/wiki/...`，旧版带连字符的 `/knowledge-bases/` 会 404。
+    // 这里按"新路径优先 + 旧路径兜底"的顺序试，兼容老后端。
     const pathSets = [
-      `/knowledge-bases/${kbId}/wiki/pages/`,
-      `/knowledge-bases/${kbId}/wiki/page/`,
-      `/knowledge-bases/${kbId}/wiki/`,
+      `/knowledgebase/${kbId}/wiki/pages/`,
+      `/knowledgebase/${kbId}/wiki/page/`,
+      `/knowledgebase/${kbId}/wiki/`,
       `/api/v1/knowledgebase/${kbId}/wiki/pages/`,
       `/api/v1/knowledgebase/${kbId}/wiki/page/`,
-      `/knowledgebase/${kbId}/wiki/pages/`
+      `/knowledge-bases/${kbId}/wiki/pages/`,
+      `/knowledge-bases/${kbId}/wiki/page/`,
+      `/knowledge-bases/${kbId}/wiki/`
     ];
 
     const attempts = [];
