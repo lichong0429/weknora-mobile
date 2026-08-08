@@ -416,6 +416,12 @@ function WikiView({ kbId }) {
   // 用于 hydrate HTML 渲染路径里的 local:// 图片（dangerouslySetInnerHTML 渲染出的
   // <img> 没法走 React 的 MarkdownImage 组件，所以手动扫 DOM 走 blob 代理）
   const mdBodyRef = useRef(null);
+  // 注意：pageContent / isHtml 必须在 useEffect 之前声明，否则 useEffect 的
+  // 依赖数组 [pageContent, isHtml] 在求值时会触发 const 的 TDZ 错误，
+  // 整个 WikiView 直接挂掉。1.1.92 没爆是因为当时根本没人点进过 wiki 详情页，
+  // useEffect 那段代码从来没被执行过；1.2.2 改了空状态 UI 之后点进去立刻崩。
+  const pageContent = pageDetail?.content || pageDetail?.body || pageDetail?.markdown || pageDetail?.text || pageDetail?.html || '';
+  const isHtml = isHtmlContent(pageContent);
   useEffect(() => {
     const root = mdBodyRef.current;
     if (!root || !pageContent) return undefined;
@@ -526,7 +532,9 @@ function WikiView({ kbId }) {
 
   const grouped = groupByType(pages);
 
-  const pageContent = pageDetail?.content || pageDetail?.body || pageDetail?.markdown || pageDetail?.text || pageDetail?.html || '';
+  // 注意：pageContent / isHtml 已经在 useEffect 之前声明过了（见上方 useEffect 块前），
+  // 这里不要重复声明。1.1.92/1.2.2 的 bug 就是因为 pageContent 在 useEffect 之后才
+  // 声明，导致 useEffect 的依赖数组 [pageContent, isHtml] 求值时触发 TDZ 错误。
 
   const statsLinks = (stats && typeof stats.total_links === 'number') ? stats.total_links : null;
   const graphLinks = (graph && Array.isArray(graph.edges)) ? graph.edges.length : null;
@@ -542,7 +550,7 @@ function WikiView({ kbId }) {
   const inLinks = Array.isArray(pageDetail?.in_links) ? pageDetail.in_links : [];
 
   if (selectedPage) {
-    const isHtml = isHtmlContent(pageContent);
+    // isHtml 已在 useEffect 之前声明过了（见上方 useEffect 块前），这里直接用
     const mdSource = preprocessWikiLinks(pageContent);
     return (
       <div className="fixed inset-0 z-40 flex flex-col bg-gray-50">
