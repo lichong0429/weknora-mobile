@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
 import { Knowledge } from '../api/endpoints.js';
-import { get } from '../api/client.js';
+import { get, getBlob, getBlobWithType } from '../api/client.js';
 import { getBaseUrl } from '../config.js';
 import { Loader2, AlertCircle, Trash2, RefreshCw, XCircle, Save, ArrowLeft, ChevronDown, ChevronUp, FileText } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -69,17 +69,45 @@ function KnowledgeDetail() {
         return;
       }
 
-      // 2. 文本 preview 接口（直接读 body 当文本）
+      // 2. 优先用 blob + Content-Type 探测 preview 接口 —— 看 mime 就能直接判断
+      //    是 PDF/图片等二进制（避免 getText 把 5MB PDF 读成字符串再检测 magic bytes，超慢）
       try {
-        const text = await withTimeout(Knowledge.preview(id), PREVIEW_TIMEOUT_MS);
-        // 后端 /knowledge/{id}/preview 对 PDF/图片等二进制文件直接流回原文件，
-        // getText 会拿到一段乱码或被截断的文本，需要先检测再决定怎么显示
+        const { blob, contentType, size } = await withTimeout(
+          getBlobWithType(`/knowledge/${id}/preview`),
+          PREVIEW_TIMEOUT_MS
+        );
+        const mime = (contentType || '').toLowerCase();
+        const binaryMime = mime.startsWith('application/pdf')
+          || mime.startsWith('image/')
+          || mime.startsWith('audio/')
+          || mime.startsWith('video/')
+          || mime.includes('officedocument')
+          || mime.includes('msword')
+          || mime.includes('excel')
+          || mime.includes('powerpoint')
+          || mime.includes('zip')
+          || mime.includes('epub');
+
+        if (binaryMime) {
+          attempts.push({ source: 'GET /knowledge/{id}/preview (blob)', ok: true, status: mime });
+          setBinaryKind({
+            kind: mimeToKind(mime, blob.size),
+            blob,
+            contentType: mime,
+            size
+          });
+          setPreviewDebug(attempts);
+          setPreviewLoading(false);
+          return;
+        }
+
+        // mime 是文本类的，转成字符串再判 magic bytes（防 mime 撒谎）
+        const text = await blob.text();
         if (text && text.trim().length > 0) {
           const kind = detectBinaryKind(text);
           if (kind) {
-            // 二进制文件：单独存起来，让渲染层显示下载/外链提示
-            attempts.push({ source: 'GET /knowledge/{id}/preview (binary)', ok: true, status: kind });
-            setBinaryKind({ kind, rawText: text });
+            attempts.push({ source: 'GET /knowledge/{id}/preview (blob→text magic)', ok: true, status: kind });
+            setBinaryKind({ kind, rawText: text, contentType: mime, size });
             setPreviewDebug(attempts);
             setPreviewLoading(false);
             return;
@@ -91,10 +119,10 @@ function KnowledgeDetail() {
           return;
         }
       } catch (err) {
-        attempts.push({ source: 'GET /knowledge/{id}/preview (text)', ok: false, error: err.message });
+        attempts.push({ source: 'GET /knowledge/{id}/preview (blob)', ok: false, error: err.message });
       }
 
-      // 3. JSON preview 接口
+      // 3. JSON preview 接口（部分后端可能用 JSON 包裹文本/HTML 字段）
       try {
         const res = await withTimeout(get(`/knowledge/${id}/preview`), PREVIEW_TIMEOUT_MS);
         const text = extractPreviewText(res);
@@ -334,7 +362,12 @@ function KnowledgeDetail() {
               <div className="space-y-3">
                 <div className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
                   <p className="font-medium">该文件是 {binaryKind.kind} 二进制格式</p>
-                  <p className="mt-1 text-xs">移动端不支持内嵌预览，请用浏览器打开或下载到本地查看。</p>
+                  <p className="mt-1 text-xs">
+                    移动端不支持内嵌预览，请用浏览器打开或下载到本地查看。
+                    {binaryKind.size != null && (
+                      <span className="ml-1 text-amber-700">（{formatBytes(binaryKind.size)}）</span>
+                    )}
+                  </p>
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <a
@@ -431,6 +464,32 @@ function detectBinaryKind(text) {
   if (head.startsWith('PK\x03\x04')) return 'ZIP/Office';
   if (/[\x00-\x08\x0e-\x1f]/.test(text.slice(0, 200))) return '二进制';
   return null;
+}
+
+// 把 mime 映射成展示用的类型标签。已知 mime 直接映射，未知兜底显示"二进制"。
+function mimeToKind(mime, size) {
+  if (!mime) return '二进制';
+  if (mime.includes('pdf')) return 'PDF';
+  if (mime.startsWith('image/png')) return 'PNG';
+  if (mime.startsWith('image/jpeg') || mime.startsWith('image/jpg')) return 'JPEG';
+  if (mime.startsWith('image/gif')) return 'GIF';
+  if (mime.startsWith('image/webp')) return 'WebP';
+  if (mime.startsWith('image/svg')) return 'SVG';
+  if (mime.includes('word') || mime.includes('officedocument.wordprocessing')) return 'Word';
+  if (mime.includes('excel') || mime.includes('officedocument.spreadsheet')) return 'Excel';
+  if (mime.includes('powerpoint') || mime.includes('officedocument.presentation')) return 'PowerPoint';
+  if (mime.includes('zip') || mime.includes('epub') || mime.includes('officedocument')) return 'ZIP/Office';
+  if (mime.startsWith('audio/')) return '音频';
+  if (mime.startsWith('video/')) return '视频';
+  return '二进制';
+}
+
+function formatBytes(bytes) {
+  if (!bytes || bytes < 0) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
 // 拼一个能在浏览器里直接打开的预览 URL（带 X-API-Key）

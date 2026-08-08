@@ -127,6 +127,25 @@ export async function getBlob(path, params = {}) {
   }
 }
 
+// 获取文件 blob 同时返回 Content-Type，用于 preview 这类需要看 mime 决定怎么渲染的场景
+export async function getBlobWithType(path, params = {}) {
+  const url = new URL(buildUrl(path), window.location.origin);
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
+  });
+  const headers = { ...getHeaders(false), Accept: '*/*' };
+
+  const res = await fetch(url.toString(), { headers });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { const body = await res.json(); msg = body.error?.message || body.message || msg; } catch {}
+    throw new Error(msg);
+  }
+  const contentType = res.headers.get('content-type') || '';
+  const blob = await res.blob();
+  return { blob, contentType, size: blob.size };
+}
+
 export async function post(path, body = {}, signal = null) {
   return request('POST', path, body, signal);
 }
