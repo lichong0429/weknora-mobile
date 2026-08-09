@@ -1,6 +1,9 @@
 import { getApiKey, getBaseUrl } from '../config.js';
 import { logRequest, logResponse } from './debug.js';
 
+// preview 只读头部这么多字节做类型探测 + 预览（文本类据此提前中断下载）
+const PREVIEW_HEAD_LEN = 6064;
+
 function buildUrl(path) {
   const base = getBaseUrl()
     .replace(/\/api\/v1\/?$/, '')
@@ -144,6 +147,73 @@ export async function getBlobWithType(path, params = {}) {
   const contentType = res.headers.get('content-type') || '';
   const blob = await res.blob();
   return { blob, contentType, size: blob.size };
+}
+
+// 流式拉取 preview：文本类只读头部（maxTextLen 字节）后立即中断下载，避免大文档整体下载导致超时/OOM；
+// 图片/二进制则读完整 blob 以便内联渲染或下载。返回 { contentType, isBinary, isImage, text?, blob?, size }
+export async function fetchPreview(path, maxTextLen = PREVIEW_HEAD_LEN) {
+  const url = new URL(buildUrl(path), window.location.origin);
+  const headers = { ...getHeaders(false), Accept: '*/*' };
+
+  const res = await fetch(url.toString(), { headers });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { const body = await res.json(); msg = body.error?.message || body.message || msg; } catch {}
+    throw new Error(msg);
+  }
+  const contentType = res.headers.get('content-type') || '';
+  const mime = contentType.toLowerCase();
+  const isImage = mime.startsWith('image/');
+  const isBinary = isImage
+    || mime.startsWith('application/pdf')
+    || mime.startsWith('audio/')
+    || mime.startsWith('video/')
+    || mime.includes('officedocument')
+    || mime.includes('msword')
+    || mime.includes('excel')
+    || mime.includes('powerpoint')
+    || mime.includes('zip')
+    || mime.includes('epub');
+
+  if (!isBinary) {
+    // 文本类：流式读取，达到上限即取消后续下载
+    const reader = res.body?.getReader ? res.body.getReader() : null;
+    if (!reader) {
+      // 不支持流式时退回整份读取
+      const text = await res.text();
+      return { contentType, isBinary: false, isImage: false, text, size: text.length };
+    }
+    const decoder = new TextDecoder();
+    const chunks = [];
+    let received = 0;
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+        if (received >= maxTextLen) break;
+      }
+    } finally {
+      // 已拿到足够内容，放弃剩余字节（关闭流）
+      try { await reader.cancel(); } catch {}
+    }
+    const text = decoder.decode(concatBytes(chunks)).slice(0, maxTextLen);
+    return { contentType, isBinary: false, isImage: false, text, size: received };
+  }
+
+  // 图片/二进制：读取完整 blob 用于内联渲染或下载
+  const blob = await res.blob();
+  return { contentType, isBinary: true, isImage, blob, size: blob.size };
+}
+
+function concatBytes(chunks) {
+  if (chunks.length === 1) return chunks[0];
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.length; }
+  return out;
 }
 
 export async function post(path, body = {}, signal = null) {
