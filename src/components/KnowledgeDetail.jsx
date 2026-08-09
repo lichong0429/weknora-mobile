@@ -2,14 +2,14 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
 import { Knowledge } from '../api/endpoints.js';
-import { get, getBlob, getBlobWithType } from '../api/client.js';
+import { get, fetchPreview } from '../api/client.js';
 import { getBaseUrl } from '../config.js';
 import { Loader2, AlertCircle, Trash2, RefreshCw, XCircle, Save, ArrowLeft, ChevronDown, ChevronUp, FileText } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 const PREVIEW_MAX_LEN = 6000;
-const PREVIEW_TIMEOUT_MS = 8000;
+const PREVIEW_TIMEOUT_MS = 20000;
 
 function withTimeout(promise, ms) {
   return Promise.race([
@@ -30,9 +30,16 @@ function KnowledgeDetail() {
   const [previewDebug, setPreviewDebug] = useState([]);
   const [showPreviewDebug, setShowPreviewDebug] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  // 后端 /knowledge/{id}/preview 对 PDF/图片等二进制文件直接流回原文件，
-  // 这里存的是检测到的文件类型 + 原始文本（用来看"调试信息"面板用）
+  // 后端 /knowledge/{id}/preview 直接把原始文件流回（PDF/图片等二进制，或文本/HTML），
+  // 这里存检测到的文件类型 + 原始文本/可内联的 blob URL（用于图片预览与下载）
   const [binaryKind, setBinaryKind] = useState(null);
+
+  // 回收 object URL，避免内存泄漏
+  useEffect(() => {
+    return () => {
+      if (binaryKind?.blobUrl) URL.revokeObjectURL(binaryKind.blobUrl);
+    };
+  }, [binaryKind]);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -48,13 +55,14 @@ function KnowledgeDetail() {
       const timer = setTimeout(() => loadPreview(), 50);
       return () => clearTimeout(timer);
     }
-  }, [knowledge]);
+  }, [knowledge, loadPreview]);
 
   const loadPreview = useCallback(async () => {
     setPreviewLoading(true);
     setPreviewError(null);
     setPreviewDebug([]);
     setExpanded(false);
+    if (binaryKind?.blobUrl) URL.revokeObjectURL(binaryKind.blobUrl);
     setBinaryKind(null);
     const attempts = [];
 
@@ -69,75 +77,55 @@ function KnowledgeDetail() {
         return;
       }
 
-      // 2. 优先用 blob + Content-Type 探测 preview 接口 —— 看 mime 就能直接判断
-      //    是 PDF/图片等二进制（避免 getText 把 5MB PDF 读成字符串再检测 magic bytes，超慢）
+      // 2. 流式拉取 preview 接口：文本类只读头部就中断下载（避免大文件整体下载导致超时/OOM），
+      //    图片/二进制读完整 blob 用于内联渲染或下载。先看 mime 判断是否为二进制。
       try {
-        const { blob, contentType, size } = await withTimeout(
-          getBlobWithType(`/knowledge/${id}/preview`),
+        const r = await withTimeout(
+          fetchPreview(`/knowledge/${id}/preview`),
           PREVIEW_TIMEOUT_MS
         );
-        const mime = (contentType || '').toLowerCase();
-        const binaryMime = mime.startsWith('application/pdf')
-          || mime.startsWith('image/')
-          || mime.startsWith('audio/')
-          || mime.startsWith('video/')
-          || mime.includes('officedocument')
-          || mime.includes('msword')
-          || mime.includes('excel')
-          || mime.includes('powerpoint')
-          || mime.includes('zip')
-          || mime.includes('epub');
+        const mime = (r.contentType || '').toLowerCase();
+        const isImage = r.isImage;
 
-        if (binaryMime) {
+        if (r.isBinary) {
           attempts.push({ source: 'GET /knowledge/{id}/preview (blob)', ok: true, status: mime });
+          const blobUrl = URL.createObjectURL(r.blob);
           setBinaryKind({
-            kind: mimeToKind(mime, blob.size),
-            blob,
+            kind: isImage ? 'image' : mimeToKind(mime, r.size),
+            isImage,
+            blobUrl,
             contentType: mime,
-            size
+            size: r.size
           });
           setPreviewDebug(attempts);
           setPreviewLoading(false);
           return;
         }
 
-        // mime 是文本类的，转成字符串再判 magic bytes（防 mime 撒谎）
-        const text = await blob.text();
+        // 文本类：只读到的头部内容，再判 magic bytes（防 mime 撒谎）
+        const text = r.text || '';
         if (text && text.trim().length > 0) {
           const kind = detectBinaryKind(text);
           if (kind) {
             attempts.push({ source: 'GET /knowledge/{id}/preview (blob→text magic)', ok: true, status: kind });
-            setBinaryKind({ kind, rawText: text, contentType: mime, size });
+            const blobUrl = URL.createObjectURL(r.blob || new Blob([text]));
+            setBinaryKind({ kind, blobUrl, rawText: text, contentType: mime, size: r.size });
             setPreviewDebug(attempts);
             setPreviewLoading(false);
             return;
           }
           attempts.push({ source: 'GET /knowledge/{id}/preview (text)', ok: true, status: 'success' });
-          setPreview(text);
+          setPreview(text.slice(0, PREVIEW_MAX_LEN));
           setPreviewDebug(attempts);
           setPreviewLoading(false);
           return;
         }
+        // 文本为空：继续兜底，不提前 return
       } catch (err) {
         attempts.push({ source: 'GET /knowledge/{id}/preview (blob)', ok: false, error: err.message });
       }
 
-      // 3. JSON preview 接口（部分后端可能用 JSON 包裹文本/HTML 字段）
-      try {
-        const res = await withTimeout(get(`/knowledge/${id}/preview`), PREVIEW_TIMEOUT_MS);
-        const text = extractPreviewText(res);
-        if (text && text.trim().length > 0) {
-          attempts.push({ source: 'GET /knowledge/{id}/preview (json)', ok: true, status: 'success' });
-          setPreview(text);
-          setPreviewDebug(attempts);
-          setPreviewLoading(false);
-          return;
-        }
-      } catch (err) {
-        attempts.push({ source: 'GET /knowledge/{id}/preview (json)', ok: false, error: err.message });
-      }
-
-      // 4. 知识详情接口兜底
+      // 3. 知识详情接口兜底（部分文档正文就在详情里）
       try {
         const res = await withTimeout(get(`/knowledge/${id}`), PREVIEW_TIMEOUT_MS);
         const text = extractPreviewText(res?.data || res);
@@ -153,13 +141,13 @@ function KnowledgeDetail() {
       }
 
       setPreviewDebug(attempts);
-      setPreviewError('无法加载预览内容，所有接口均返回空或失败。');
+      setPreviewError('该文档暂无预览内容，可能尚未解析完成，或后端未提供预览接口。');
     } catch (err) {
       setPreviewError(err.message || '加载预览失败');
     } finally {
       setPreviewLoading(false);
     }
-  }, [id, knowledge]);
+  }, [id, knowledge, binaryKind]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -360,26 +348,36 @@ function KnowledgeDetail() {
               </div>
             ) : binaryKind ? (
               <div className="space-y-3">
-                <div className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
-                  <p className="font-medium">该文件是 {binaryKind.kind} 二进制格式</p>
-                  <p className="mt-1 text-xs">
-                    移动端不支持内嵌预览，请用浏览器打开或下载到本地查看。
-                    {binaryKind.size != null && (
-                      <span className="ml-1 text-amber-700">（{formatBytes(binaryKind.size)}）</span>
-                    )}
-                  </p>
-                </div>
+                {binaryKind.isImage ? (
+                  <img
+                    src={binaryKind.blobUrl}
+                    alt="preview"
+                    className="max-h-80 w-full rounded-xl object-contain bg-gray-50"
+                  />
+                ) : (
+                  <div className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
+                    <p className="font-medium">该文件是 {binaryKind.kind} 二进制格式</p>
+                    <p className="mt-1 text-xs">
+                      移动端不支持内嵌预览，请下载到本地查看。
+                      {binaryKind.size != null && (
+                        <span className="ml-1 text-amber-700">（{formatBytes(binaryKind.size)}）</span>
+                      )}
+                    </p>
+                  </div>
+                )}
                 <div className="flex flex-col gap-2 sm:flex-row">
+                  {!binaryKind.isImage && (
+                    <a
+                      href={getPreviewFileUrl(id, binaryKind.kind)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-blue-600 px-3 py-2 text-xs font-medium text-white active:scale-95"
+                    >
+                      在浏览器中打开
+                    </a>
+                  )}
                   <a
-                    href={getPreviewFileUrl(id, binaryKind.kind)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-blue-600 px-3 py-2 text-xs font-medium text-white active:scale-95"
-                  >
-                    在浏览器中打开
-                  </a>
-                  <a
-                    href={getPreviewFileUrl(id, binaryKind.kind)}
+                    href={binaryKind.blobUrl}
                     download
                     className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-gray-100 px-3 py-2 text-xs font-medium text-gray-700 active:scale-95"
                   >
@@ -453,7 +451,7 @@ function isHtmlContent(text) {
 
 // 检测后端 preview 接口返回的 body 是不是二进制文件（PDF/图片等）。
 // 后端 /knowledge/{id}/preview 对 PDF/图片是直接流回原文件的 Content-Type 形式，
-// 但移动端用 getText 拿到的 body 会包含 magic bytes 或不可打印字符。
+// 但移动端用 blob 拿到的文本会包含 magic bytes 或不可打印字符。
 function detectBinaryKind(text) {
   if (typeof text !== 'string' || text.length === 0) return null;
   const head = text.slice(0, 16);
