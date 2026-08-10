@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
 import { Knowledge } from '../api/endpoints.js';
@@ -34,6 +34,12 @@ function KnowledgeDetail() {
   // 这里存检测到的文件类型 + 原始文本/可内联的 blob URL（用于图片预览与下载）
   const [binaryKind, setBinaryKind] = useState(null);
 
+  // 用 ref 持有最新的 binaryKind，避免 loadPreview 把它放进依赖导致重渲染死循环
+  const binaryKindRef = useRef(binaryKind);
+  binaryKindRef.current = binaryKind;
+  // 用 ref 持有最新的 loadPreview，避免其在 useEffect 依赖数组里被“声明前引用”触发 TDZ 崩溃
+  const loadPreviewRef = useRef(null);
+
   // 回收 object URL，避免内存泄漏
   useEffect(() => {
     return () => {
@@ -51,18 +57,18 @@ function KnowledgeDetail() {
     if (knowledge) {
       setTitle(knowledge.title || '');
       setDescription(knowledge.description || '');
-      // 延迟加载 preview，避免页面切换时阻塞
-      const timer = setTimeout(() => loadPreview(), 50);
+      // 延迟加载 preview，避免页面切换时阻塞；通过 ref 调用，避免 loadPreview 进入依赖触发 TDZ
+      const timer = setTimeout(() => loadPreviewRef.current?.(), 50);
       return () => clearTimeout(timer);
     }
-  }, [knowledge, loadPreview]);
+  }, [knowledge]);
 
   const loadPreview = useCallback(async () => {
     setPreviewLoading(true);
     setPreviewError(null);
     setPreviewDebug([]);
     setExpanded(false);
-    if (binaryKind?.blobUrl) URL.revokeObjectURL(binaryKind.blobUrl);
+    if (binaryKindRef.current?.blobUrl) URL.revokeObjectURL(binaryKindRef.current.blobUrl);
     setBinaryKind(null);
     const attempts = [];
 
@@ -147,7 +153,10 @@ function KnowledgeDetail() {
     } finally {
       setPreviewLoading(false);
     }
-  }, [id, knowledge, binaryKind]);
+  }, [id, knowledge]);
+
+  // 每次渲染后把最新 loadPreview 同步到 ref（useEffect 通过 ref 调用，拿到的是最新闭包）
+  loadPreviewRef.current = loadPreview;
 
   const handleSave = async () => {
     setSaving(true);
@@ -210,7 +219,16 @@ function KnowledgeDetail() {
     );
   }
 
-  if (!knowledge) return null;
+  if (!knowledge) {
+    return (
+      <div className="p-4">
+        <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">
+          未找到该知识条目，或后端未返回有效数据。
+          <button onClick={() => navigate(-1)} className="ml-2 text-xs text-blue-600">返回</button>
+        </div>
+      </div>
+    );
+  }
 
   const isHtml = isHtmlContent(preview);
   const displayPreview = expanded ? preview : preview.slice(0, PREVIEW_MAX_LEN);
