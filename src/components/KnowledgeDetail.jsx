@@ -7,6 +7,7 @@ import { getBaseUrl } from '../config.js';
 import { Loader2, AlertCircle, Trash2, RefreshCw, XCircle, Save, ArrowLeft, ChevronDown, ChevronUp, FileText } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import KnowledgeChunks from './KnowledgeChunks.jsx';
 
 const PREVIEW_MAX_LEN = 6000;
 const PREVIEW_TIMEOUT_MS = 20000;
@@ -109,7 +110,9 @@ function KnowledgeDetail() {
         }
 
         // 文本类：只读到的头部内容，再判 magic bytes（防 mime 撒谎）
-        const text = r.text || '';
+        // 后端 preview 接口可能直接返回正文，也可能返回 JSON（如 { code, data:{ content } }），
+        // 统一用 extractTextFromAny 提取其中的正文串。
+        const text = extractTextFromAny(r.text || '');
         if (text && text.trim().length > 0) {
           const kind = detectBinaryKind(text);
           if (kind) {
@@ -346,24 +349,30 @@ function KnowledgeDetail() {
                 <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" /> 加载预览…
               </div>
             ) : previewError ? (
-              <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">
-                <p>{previewError}</p>
-                <button
-                  onClick={() => setShowPreviewDebug((s) => !s)}
-                  className="mt-2 text-xs text-gray-600"
-                >
-                  {showPreviewDebug ? '隐藏调试' : '显示调试'}
-                </button>
-                {showPreviewDebug && (
-                  <div className="mt-2 rounded-lg bg-gray-900 p-2 text-xs text-gray-100">
-                    {previewDebug.map((a, i) => (
-                      <div key={i} className={a.ok ? 'text-green-400' : 'text-red-400'}>
-                        {a.ok ? '✓' : '✗'} {a.source}: {a.ok ? a.status : a.error}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <>
+                <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">
+                  <p>{previewError}</p>
+                  <button
+                    onClick={() => setShowPreviewDebug((s) => !s)}
+                    className="mt-2 text-xs text-gray-600"
+                  >
+                    {showPreviewDebug ? '隐藏调试' : '显示调试'}
+                  </button>
+                  {showPreviewDebug && (
+                    <div className="mt-2 rounded-lg bg-gray-900 p-2 text-xs text-gray-100">
+                      {previewDebug.map((a, i) => (
+                        <div key={i} className={a.ok ? 'text-green-400' : 'text-red-400'}>
+                          {a.ok ? '✓' : '✗'} {a.source}: {a.ok ? a.status : a.error}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="mt-3">
+                  <p className="mb-2 text-xs font-medium text-gray-500">尝试以分块内容展示：</p>
+                  <KnowledgeChunks knowledgeId={id} kbId={knowledge.kb_id} />
+                </div>
+              </>
             ) : binaryKind ? (
               <div className="space-y-3">
                 {binaryKind.isImage ? (
@@ -439,6 +448,9 @@ function KnowledgeDetail() {
                 <FileText className="mx-auto mb-2 h-8 w-8 text-gray-300" />
                 <p className="text-sm text-gray-500">暂无预览内容</p>
                 <p className="mt-1 text-xs text-gray-400">该文档可能尚未解析完成，或后端未提供预览接口</p>
+                <div className="mt-4 text-left">
+                  <KnowledgeChunks knowledgeId={id} kbId={knowledge.kb_id} />
+                </div>
               </div>
             )}
           </div>
@@ -451,11 +463,46 @@ function KnowledgeDetail() {
 function extractPreviewText(data) {
   if (!data) return '';
   if (typeof data === 'string') return data.trim();
-  const candidates = [data.content, data.text, data.preview, data.body, data.markdown, data.html, data.answer, data.document];
+  // 兼容后端可能的信封嵌套：{ data: {...} } 或 { result: {...} }
+  const inner = data.data && typeof data.data === 'object' ? data.data
+    : data.result && typeof data.result === 'object' ? data.result
+    : data;
+  const candidates = [
+    inner?.content, inner?.text, inner?.preview, inner?.body, inner?.markdown,
+    inner?.html, inner?.answer, inner?.document, inner?.summary, inner?.parsed_content,
+    inner?.chunk_text, inner?.content_text,
+    data?.content, data?.text, data?.preview, data?.body, data?.markdown,
+    data?.html, data?.answer, data?.document, data?.summary, data?.parsed_content
+  ];
   for (const c of candidates) {
     if (typeof c === 'string' && c.trim().length > 0) return c;
   }
+  // 某些后端把正文放在 data.data.content 之类的二级字段
+  if (data.data && typeof data.data === 'object') {
+    const d2 = data.data;
+    const c2 = [d2.content, d2.text, d2.preview, d2.body, d2.markdown, d2.html, d2.document, d2.summary];
+    for (const c of c2) {
+      if (typeof c === 'string' && c.trim().length > 0) return c;
+    }
+  }
   return '';
+}
+
+// 后端 preview / detail 接口可能直接返回正文文本，也可能返回 JSON（如 { code, data:{ content } }）。
+// 若是 JSON，尝试提取其中的正文串；否则原样返回。
+function extractTextFromAny(raw) {
+  if (!raw || !raw.trim()) return '';
+  const t = raw.trim();
+  if (t[0] === '{' || t[0] === '[') {
+    try {
+      const obj = JSON.parse(t);
+      const extracted = extractPreviewText(obj);
+      if (extracted) return extracted;
+    } catch {
+      // 不是合法 JSON，按纯文本处理
+    }
+  }
+  return t;
 }
 
 function isHtmlContent(text) {

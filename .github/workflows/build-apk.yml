@@ -41,7 +41,7 @@ jobs:
 
       - name: Build web assets
         run: |
-          rm -rf dist-webview
+          rm -rf dist-webview node_modules/.vite
           npx vite build --config vite.config.webview.js
 
       - name: Copy assets to Android project
@@ -79,6 +79,22 @@ jobs:
           name: weknora-mobile-apk-${{ github.run_number }}
           path: webview-app/app/build/outputs/apk/release/weknora-mobile-webview.apk
 
+      - name: Prepare release notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if [ -f RELEASE_NOTES.md ]; then
+            cp RELEASE_NOTES.md release-body.md
+            echo "Using RELEASE_NOTES.md for release body"
+          else
+            PREV_TAG=$(git tag --sort=-creatordate | sed -n 2p)
+            if [ -n "$PREV_TAG" ]; then
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${{ github.ref_name }}" > release-body.md
+            else
+              echo "Release ${{ github.ref_name }}" > release-body.md
+            fi
+            echo "RELEASE_NOTES.md not found, used fallback"
+          fi
+
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -86,7 +102,7 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: "WeKnora Mobile ${{ github.ref_name }}"
           files: webview-app/app/build/outputs/apk/release/weknora-mobile-webview.apk
-          generate_release_notes: true
+          body_path: release-body.md
           make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

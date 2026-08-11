@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
-import { KB, Knowledge, Tag } from '../api/endpoints.js';
+import { KB, Knowledge, Tag, Session } from '../api/endpoints.js';
 import KBSettings from './KBSettings.jsx';
 import WikiView from './WikiView.jsx';
 import GraphView from './GraphView.jsx';
@@ -13,7 +13,7 @@ import {
   FileText, Search, Settings, Upload, Loader2, AlertCircle,
   ChevronRight, Trash2, File, Link, PenLine, Database, RefreshCw,
   Filter, X, CheckSquare, Square, BookOpen, Share2,
-  Tag as TagIcon, HelpCircle, Plus, BarChart3
+  Tag as TagIcon, HelpCircle, Plus, BarChart3, MessageSquare
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -217,6 +217,15 @@ function KBDetail() {
     }
   };
 
+  const handleStartChat = async () => {
+    try {
+      const res = await Session.create({ knowledge_base_id: id });
+      navigate(`/session/${res.data.id}`);
+    } catch (err) {
+      alert('创建对话失败：' + (err.message || '未知错误'));
+    }
+  };
+
   const error = kbError || (activeTab === 'docs' && listError);
 
   return (
@@ -252,6 +261,12 @@ function KBDetail() {
                 </div>
               </div>
             </div>
+            <button
+              onClick={handleStartChat}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 py-2.5 text-sm font-medium text-white shadow-sm hover:from-blue-700 hover:to-indigo-700 active:scale-95 transition-transform"
+            >
+              <MessageSquare className="h-4 w-4" /> 开始对话
+            </button>
           </div>
 
           <div className="mb-4 flex rounded-2xl bg-white p-1 shadow-sm">

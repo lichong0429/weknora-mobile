@@ -69,7 +69,8 @@ export const Model = {
   create: (body) => post('/models', body),
   update: (id, body) => put(`/models/${id}`, body),
   remove: (id) => del(`/models/${id}`),
-  providers: (modelType) => get('/models/providers', modelType ? { model_type: modelType } : {})
+  providers: (modelType) => get('/models/providers', modelType ? { model_type: modelType } : {}),
+  test: (id) => post(`/models/${id}/test`)
 };
 
 export const VectorStore = {

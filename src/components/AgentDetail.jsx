@@ -1,14 +1,18 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
-import { Agent } from '../api/endpoints.js';
-import { Loader2, AlertCircle, Save, Trash2, Bot, ArrowLeft } from 'lucide-react';
+import { Agent, Model, KB } from '../api/endpoints.js';
+import { Loader2, AlertCircle, Save, Trash2, Bot, ArrowLeft, Cpu, BookOpen } from 'lucide-react';
 
 function AgentDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { data, loading, error, run } = useAsync(() => Agent.detail(id), [id]);
+  const { data: modelRes } = useAsync(() => Model.list(), []);
+  const { data: kbRes } = useAsync(() => KB.list(), []);
   const agent = data?.data;
+  const models = modelRes?.data || [];
+  const kbs = kbRes?.data || [];
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -19,6 +23,10 @@ function AgentDetail() {
   const [maxTokens, setMaxTokens] = useState(2048);
   const [webSearch, setWebSearch] = useState(false);
   const [multiTurn, setMultiTurn] = useState(true);
+  const [modelId, setModelId] = useState('');
+  const [selectedKBs, setSelectedKBs] = useState([]);
+  const [summaryModelId, setSummaryModelId] = useState('');
+  const [rerankModelId, setRerankModelId] = useState('');
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -33,6 +41,11 @@ function AgentDetail() {
       setMaxTokens(agent.config?.max_completion_tokens ?? 2048);
       setWebSearch(agent.config?.web_search_enabled ?? false);
       setMultiTurn(agent.config?.multi_turn_enabled ?? true);
+      setModelId(agent.config?.model_id || agent.model_id || '');
+      setSummaryModelId(agent.config?.summary_model_id || '');
+      setRerankModelId(agent.config?.rerank_model_id || '');
+      const kbIds = agent.config?.knowledge_base_ids || agent.knowledge_base_ids || [];
+      setSelectedKBs(Array.isArray(kbIds) ? kbIds : []);
     }
   }, [agent]);
 
@@ -44,13 +57,18 @@ function AgentDetail() {
         name,
         description,
         avatar,
+        knowledge_base_ids: selectedKBs,
         config: {
           agent_mode: mode,
           system_prompt: systemPrompt,
           temperature,
           max_completion_tokens: maxTokens,
           web_search_enabled: webSearch,
-          multi_turn_enabled: multiTurn
+          multi_turn_enabled: multiTurn,
+          model_id: modelId || undefined,
+          summary_model_id: summaryModelId || undefined,
+          rerank_model_id: rerankModelId || undefined,
+          knowledge_base_ids: selectedKBs
         }
       });
       run();
@@ -150,6 +168,74 @@ function AgentDetail() {
             <option value="quick-answer">快速问答</option>
             <option value="smart-reasoning">智能推理</option>
           </select>
+        </div>
+        <div>
+          <label className="mb-1 flex items-center gap-1 text-sm font-medium text-gray-700">
+            <Cpu className="h-3.5 w-3.5" /> 模型
+          </label>
+          <select
+            value={modelId}
+            onChange={(e) => setModelId(e.target.value)}
+            className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            <option value="">使用知识库默认模型</option>
+            {models.filter(m => m.type === 'KnowledgeQA').map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 flex items-center gap-1 text-sm font-medium text-gray-700">
+            <Cpu className="h-3.5 w-3.5" /> 摘要模型（可选）
+          </label>
+          <select
+            value={summaryModelId}
+            onChange={(e) => setSummaryModelId(e.target.value)}
+            className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            <option value="">默认</option>
+            {models.filter(m => m.type === 'KnowledgeQA').map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 flex items-center gap-1 text-sm font-medium text-gray-700">
+            <Cpu className="h-3.5 w-3.5" /> Rerank 模型（可选）
+          </label>
+          <select
+            value={rerankModelId}
+            onChange={(e) => setRerankModelId(e.target.value)}
+            className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          >
+            <option value="">默认</option>
+            {models.filter(m => m.type === 'Rerank').map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 flex items-center gap-1 text-sm font-medium text-gray-700">
+            <BookOpen className="h-3.5 w-3.5" /> 关联知识库
+          </label>
+          <div className="max-h-32 overflow-y-auto rounded-xl border border-gray-200 bg-gray-50 p-2">
+            {kbs.length === 0 && <p className="text-xs text-gray-400">暂无知识库</p>}
+            {kbs.map((kb) => (
+              <label key={kb.id} className="flex items-center gap-2 py-1 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={selectedKBs.includes(kb.id)}
+                  onChange={() => {
+                    setSelectedKBs((prev) =>
+                      prev.includes(kb.id) ? prev.filter((x) => x !== kb.id) : [...prev, kb.id]
+                    );
+                  }}
+                  className="h-4 w-4 text-blue-600 rounded"
+                />
+                <span className="truncate">{kb.name}</span>
+              </label>
+            ))}
+          </div>
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-gray-700">系统提示词</label>

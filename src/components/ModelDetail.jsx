@@ -20,6 +20,8 @@ function ModelDetail() {
   const navigate = useNavigate();
   const { data, loading, error, run } = useAsync(() => Model.detail(id), [id]);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
   const [form, setForm] = useState(null);
 
   const model = data?.data;
@@ -73,6 +75,22 @@ function ModelDetail() {
       navigate('/models');
     } catch (err) {
       alert(err.message || '删除失败');
+    }
+  };
+
+  const handleTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    const start = Date.now();
+    try {
+      const res = await Model.test(id);
+      const elapsed = ((Date.now() - start) / 1000).toFixed(2);
+      setTestResult({ status: 'success', message: `连接成功 （${elapsed}s）`, data: res });
+    } catch (err) {
+      const elapsed = ((Date.now() - start) / 1000).toFixed(2);
+      setTestResult({ status: 'error', message: `连接失败: ${err.message} （${elapsed}s）` });
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -221,16 +239,34 @@ function ModelDetail() {
             />
           </div>
         )}
-        <div className="pt-2">
+        <div className="flex gap-3 pt-2">
           <button
             type="submit"
             disabled={saving}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+            className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50"
           >
             <Save className="h-4 w-4" />
             {saving ? '保存中…' : '保存'}
           </button>
+          <button
+            type="button"
+            onClick={handleTest}
+            disabled={testing}
+            className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {testing ? (
+              <><Loader2 className="h-4 w-4 animate-spin" /> 测试中…</>
+            ) : '测试连接'}
+          </button>
         </div>
+        {testResult && (
+          <div className={clsx(
+            'mt-3 rounded-xl p-3 text-sm',
+            testResult.status === 'success' ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-700'
+          )}>
+            <p className="font-medium">{testResult.status === 'success' ? '✓ ' : '✗ '}{testResult.message}</p>
+          </div>
+        )}
       </form>
 
       <div className="mt-6 rounded-2xl bg-white p-4 shadow-sm">

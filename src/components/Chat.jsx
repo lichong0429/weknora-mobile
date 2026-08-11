@@ -44,6 +44,17 @@ function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streaming]);
 
+  // Auto-select knowledge base from session pre-binding (e.g. started from KB detail)
+  useEffect(() => {
+    if (session) {
+      const kbId = session.knowledge_base_id;
+      if (kbId && selectedKBs.length === 0) {
+        setSelectedKBs([kbId]);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
+
   const toggleKB = (kbId) => {
     setSelectedKBs((prev) =>
       prev.includes(kbId) ? prev.filter((x) => x !== kbId) : [...prev, kbId]
@@ -63,7 +74,7 @@ function Chat() {
 
     const payload = {
       query,
-      knowledge_base_ids: selectedKBs.length ? selectedKBs : undefined
+      knowledge_base_ids: selectedKBs.length ? selectedKBs : (session?.knowledge_base_id ? [session.knowledge_base_id] : undefined)
     };
     if (selectedAgentId) {
       payload.agent_id = selectedAgentId;
@@ -77,7 +88,9 @@ function Chat() {
       for await (const ev of chatStream(id, payload, { type: selectedAgentId ? 'agent' : 'knowledge', signal: controller.signal })) {
         const json = ev.json;
         if (!json) continue;
-        const { response_type, content, knowledge_references, done, id: msgId } = json;
+        // 兼容后端可能用 response_type 或 type 作为事件字段名
+        const response_type = json.response_type || json.type;
+        const { content, knowledge_references, done, id: msgId } = json;
 
         if (msgId) setLastMessageId(msgId);
 
@@ -88,7 +101,7 @@ function Chat() {
           if (response_type === 'answer' && typeof content === 'string') {
             next.content += content;
           }
-          if (response_type === 'references' && Array.isArray(knowledge_references)) {
+          if (response_type === 'references' || response_type === 'reference' && Array.isArray(knowledge_references)) {
             next.knowledge_references = knowledge_references;
           }
           if (response_type === 'error') {
