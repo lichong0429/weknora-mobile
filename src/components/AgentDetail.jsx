@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
-import { Agent, Model, KB } from '../api/endpoints.js';
-import { Loader2, AlertCircle, Save, Trash2, Bot, ArrowLeft, Cpu, BookOpen } from 'lucide-react';
+import { Agent, Model, KB, Session } from '../api/endpoints.js';
+import { Loader2, AlertCircle, Save, Trash2, Bot, ArrowLeft, Cpu, BookOpen, MessageSquare } from 'lucide-react';
 
 function AgentDetail() {
   const { id } = useParams();
@@ -95,6 +95,15 @@ function AgentDetail() {
     }
   };
 
+  const handleTestChat = async () => {
+    try {
+      const res = await Session.create({ agent_id: id });
+      navigate(`/session/${res.data.id}`);
+    } catch (err) {
+      alert('创建测试会话失败：' + (err.message || '未知错误'));
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12 text-gray-500">
@@ -125,11 +134,17 @@ function AgentDetail() {
           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-indigo-50 text-2xl">
             {agent.avatar || <Bot className="h-7 w-7 text-indigo-600" />}
           </div>
-          <div>
+          <div className="min-w-0 flex-1">
             <h2 className="text-lg font-bold text-gray-900">{agent.name}</h2>
             <p className="text-xs text-gray-500">{agent.is_builtin ? '内置' : '自定义'} · {agent.config?.agent_mode}</p>
           </div>
         </div>
+        <button
+          onClick={handleTestChat}
+          className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 py-2.5 text-sm font-medium text-white shadow-sm hover:from-indigo-700 hover:to-violet-700 active:scale-95 transition-transform"
+        >
+          <MessageSquare className="h-4 w-4" /> 测试对话
+        </button>
       </div>
 
       <form onSubmit={handleSave} className="space-y-4 rounded-2xl bg-white p-4 shadow-sm">

@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
-import { Session, Message, KB, Agent } from '../api/endpoints.js';
+import { Session, Message, KB, Agent, Model } from '../api/endpoints.js';
 import { chatStream } from '../api/client.js';
 import {
-  Loader2, AlertCircle, Send, Square, Bot, Settings2, BookOpen, Sparkles, User
+  Loader2, AlertCircle, Send, Square, Bot, Settings2, BookOpen, Sparkles, User, Cpu
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import ReactMarkdown from 'react-markdown';
@@ -16,6 +16,7 @@ function Chat() {
   const { data: messagesRes, loading: messagesLoading, error: messagesError, run: refreshMessages } = useAsync(() => Message.load(id, { limit: 50 }), [id]);
   const { data: kbRes } = useAsync(() => KB.list(), []);
   const { data: agentRes } = useAsync(() => Agent.list(), []);
+  const { data: modelRes } = useAsync(() => Model.list(), []);
 
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -24,12 +25,14 @@ function Chat() {
   const [showConfig, setShowConfig] = useState(false);
   const [selectedAgentId, setSelectedAgentId] = useState('');
   const [selectedKBs, setSelectedKBs] = useState([]);
+  const [selectedModelId, setSelectedModelId] = useState('');
   const [lastMessageId, setLastMessageId] = useState(null);
   const abortRef = useRef(null);
   const bottomRef = useRef(null);
 
   const kbs = kbRes?.data || [];
   const agents = agentRes?.data || [];
+  const models = (modelRes?.data || []).filter((m) => m.type === 'KnowledgeQA');
   const session = sessionRes?.data;
 
   useEffect(() => {
@@ -44,12 +47,18 @@ function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streaming]);
 
-  // Auto-select knowledge base from session pre-binding (e.g. started from KB detail)
+  // Auto-select KB / agent / model from session pre-binding (e.g. started from KB detail or Agent test)
   useEffect(() => {
     if (session) {
       const kbId = session.knowledge_base_id;
       if (kbId && selectedKBs.length === 0) {
         setSelectedKBs([kbId]);
+      }
+      if (!selectedAgentId && session.agent_id) {
+        setSelectedAgentId(session.agent_id);
+      }
+      if (!selectedModelId && session.model_id) {
+        setSelectedModelId(session.model_id);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -76,6 +85,9 @@ function Chat() {
       query,
       knowledge_base_ids: selectedKBs.length ? selectedKBs : (session?.knowledge_base_id ? [session.knowledge_base_id] : undefined)
     };
+    if (selectedModelId) {
+      payload.model_id = selectedModelId;
+    }
     if (selectedAgentId) {
       payload.agent_id = selectedAgentId;
       payload.agent_enabled = true;
@@ -161,6 +173,21 @@ function Chat() {
 
         {showConfig && (
           <div className="mt-3 space-y-3 rounded-xl bg-gray-50 p-3">
+            <div>
+              <label className="mb-1 flex items-center gap-1 text-xs font-medium text-gray-700">
+                <Cpu className="h-3.5 w-3.5" /> 模型（可选）
+              </label>
+              <select
+                value={selectedModelId}
+                onChange={(e) => setSelectedModelId(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm"
+              >
+                <option value="">使用默认模型</option>
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </select>
+            </div>
             <div>
               <label className="mb-1 flex items-center gap-1 text-xs font-medium text-gray-700">
                 <Bot className="h-3.5 w-3.5" /> 智能体（可选）

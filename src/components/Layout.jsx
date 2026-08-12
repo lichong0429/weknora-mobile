@@ -30,8 +30,8 @@ function Layout() {
         <h1 className="text-lg font-semibold text-gray-900">WeKnora Mobile</h1>
       </header>
 
-      <main className="flex-1 overflow-y-auto no-scrollbar safe-bottom">
-        <div className="mx-auto flex h-full min-h-0 w-full max-w-md flex-col pb-20">
+      <main className="flex-1 overflow-y-auto no-scrollbar">
+        <div className="mx-auto flex h-full min-h-0 w-full max-w-md flex-col pb-28">
           <Outlet />
         </div>
       </main>
