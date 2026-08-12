@@ -97,8 +97,8 @@ function AgentDetail() {
 
   const handleTestChat = async () => {
     try {
-      const res = await Session.create({ agent_id: id });
-      navigate(`/session/${res.data.id}`);
+      const res = await Session.create({ title: agent?.name || '测试会话' });
+      navigate(`/session/${res.data.id}`, { state: { agent_id: id } });
     } catch (err) {
       alert('创建测试会话失败：' + (err.message || '未知错误'));
     }

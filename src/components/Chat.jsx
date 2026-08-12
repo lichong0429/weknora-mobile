@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useLocation } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
 import { Session, Message, KB, Agent, Model } from '../api/endpoints.js';
 import { chatStream } from '../api/client.js';
@@ -12,6 +12,7 @@ import remarkGfm from 'remark-gfm';
 
 function Chat() {
   const { id } = useParams();
+  const location = useLocation();
   const { data: sessionRes, loading: sessionLoading, error: sessionError, run: refreshSession } = useAsync(() => Session.detail(id), [id]);
   const { data: messagesRes, loading: messagesLoading, error: messagesError, run: refreshMessages } = useAsync(() => Message.load(id, { limit: 50 }), [id]);
   const { data: kbRes } = useAsync(() => KB.list(), []);
@@ -47,22 +48,18 @@ function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streaming]);
 
-  // Auto-select KB / agent / model from session pre-binding (e.g. started from KB detail or Agent test)
+  // 从路由 state 预选 KB / agent（从知识库「开始对话」或智能体「测试对话」跳转而来）
   useEffect(() => {
-    if (session) {
-      const kbId = session.knowledge_base_id;
-      if (kbId && selectedKBs.length === 0) {
-        setSelectedKBs([kbId]);
-      }
-      if (!selectedAgentId && session.agent_id) {
-        setSelectedAgentId(session.agent_id);
-      }
-      if (!selectedModelId && session.model_id) {
-        setSelectedModelId(session.model_id);
-      }
+    const stateKbId = location.state?.knowledge_base_id;
+    const stateAgentId = location.state?.agent_id;
+    if (stateKbId && selectedKBs.length === 0) {
+      setSelectedKBs([stateKbId]);
+    }
+    if (stateAgentId && !selectedAgentId) {
+      setSelectedAgentId(stateAgentId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session]);
+  }, [location.state]);
 
   const toggleKB = (kbId) => {
     setSelectedKBs((prev) =>
@@ -72,6 +69,10 @@ function Chat() {
 
   const handleSend = async () => {
     if (!input.trim() || streaming) return;
+    if (selectedKBs.length === 0 && !selectedAgentId) {
+      setStreamError('请先点右上角设置图标，选择至少一个知识库或智能体，再提问。');
+      return;
+    }
     const query = input.trim();
     setInput('');
     setStreamError(null);
@@ -83,10 +84,11 @@ function Chat() {
 
     const payload = {
       query,
-      knowledge_base_ids: selectedKBs.length ? selectedKBs : (session?.knowledge_base_id ? [session.knowledge_base_id] : undefined)
+      knowledge_base_ids: selectedKBs.length ? selectedKBs : undefined
     };
     if (selectedModelId) {
-      payload.model_id = selectedModelId;
+      // WeKnora 知识问答接口用 summary_model_id 覆盖默认摘要模型
+      payload.summary_model_id = selectedModelId;
     }
     if (selectedAgentId) {
       payload.agent_id = selectedAgentId;

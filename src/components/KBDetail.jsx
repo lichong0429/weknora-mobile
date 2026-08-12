@@ -219,8 +219,9 @@ function KBDetail() {
 
   const handleStartChat = async () => {
     try {
-      const res = await Session.create({ knowledge_base_id: id });
-      navigate(`/session/${res.data.id}`);
+      // WeKnora 会话创建只接受 title/description，知识库在每次提问时动态传入
+      const res = await Session.create({ title: kb?.name || '新会话' });
+      navigate(`/session/${res.data.id}`, { state: { knowledge_base_id: id } });
     } catch (err) {
       alert('创建对话失败：' + (err.message || '未知错误'));
     }

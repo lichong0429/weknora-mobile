@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { Search as SearchIcon, Loader2, BookOpen, AlertCircle, ChevronDown } from 'lucide-react';
 import { useAsync } from '../hooks/useApi.js';
 import { Search as SearchAPI, KB } from '../api/endpoints.js';
+import { extractList } from '../utils/list.js';
 
 function Search() {
   const { data: kbRes } = useAsync(() => KB.list(), []);
-  const kbs = kbRes?.data || [];
+  const kbs = extractList(kbRes);
 
   const [query, setQuery] = useState('');
   const [selectedKBs, setSelectedKBs] = useState([]);
@@ -30,8 +31,12 @@ function Search() {
       } else if (kbs.length) {
         payload.knowledge_base_ids = kbs.map((k) => k.id);
       }
+      if (!payload.knowledge_base_ids?.length) {
+        setError('未找到可搜索的知识库，请先在「设置」中确认连接，或检查知识库是否已创建。');
+        return;
+      }
       const res = await SearchAPI.knowledge(payload);
-      setResults(res.data || []);
+      setResults(extractList(res));
     } catch (err) {
       setError(err.message || '搜索失败');
     } finally {
