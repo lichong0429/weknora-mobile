@@ -156,27 +156,27 @@ function Chat() {
   return (
     <div className="flex flex-1 flex-col">
       {/* Header */}
-      <div className="safe-top sticky top-0 z-10 border-b bg-white px-4 py-3">
+      <div className="safe-top sticky top-0 z-10 border-b border-line bg-white/90 backdrop-blur px-4 py-3">
         <div className="flex items-center justify-between">
           <div className="min-w-0 flex-1">
-            <h2 className="truncate text-base font-bold text-gray-900">{session?.title || '新会话'}</h2>
-            <p className="truncate text-xs text-gray-500">
+            <h2 className="truncate text-base font-semibold text-ink">{session?.title || '新会话'}</h2>
+            <p className="truncate text-xs text-ink-muted">
               {selectedAgentId ? agents.find((a) => a.id === selectedAgentId)?.name : '知识库问答'}
               {selectedKBs.length > 0 && ` · ${selectedKBs.length} 个知识库`}
             </p>
           </div>
           <button
             onClick={() => setShowConfig(!showConfig)}
-            className={clsx('rounded-full p-2', showConfig ? 'bg-blue-100 text-blue-600' : 'text-gray-500 hover:bg-gray-100')}
+            className={clsx('rounded-xl p-2', showConfig ? 'bg-brand-50 text-brand-600' : 'text-ink-muted hover:bg-surface-subtle')}
           >
             <Settings2 className="h-5 w-5" />
           </button>
         </div>
 
         {showConfig && (
-          <div className="mt-3 space-y-3 rounded-xl bg-gray-50 p-3">
+          <div className="mt-3 space-y-3 rounded-[14px] bg-surface-soft p-3">
             <div>
-              <label className="mb-1 flex items-center gap-1 text-xs font-medium text-gray-700">
+              <label className="mb-1 flex items-center gap-1 text-xs font-medium text-ink-secondary">
                 <Cpu className="h-3.5 w-3.5" /> 模型（可选）
               </label>
               <select
@@ -250,11 +250,13 @@ function Chat() {
             >
               <div
                 className={clsx(
-                  'max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm',
-                  msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-white text-gray-800'
+                  'max-w-[85%] rounded-[18px] px-4 py-3 text-sm shadow-card',
+                  msg.role === 'user'
+                    ? 'rounded-tr-[6px] bg-gradient-to-br from-brand-600 to-brand-400 text-white'
+                    : 'rounded-tl-[6px] bg-white text-ink'
                 )}
               >
-                <div className="mb-1 flex items-center gap-1 text-xs opacity-70">
+                <div className={clsx('mb-1 flex items-center gap-1 text-xs', msg.role === 'user' ? 'opacity-80' : 'text-ink-muted')}>
                   {msg.role === 'user' ? <User className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
                   {msg.role === 'user' ? '我' : 'AI'}
                 </div>
@@ -264,12 +266,12 @@ function Chat() {
                   </ReactMarkdown>
                 </div>
                 {msg.knowledge_references?.length > 0 && (
-                  <div className="mt-3 border-t border-gray-200 pt-2">
-                    <p className="mb-1 text-xs font-medium text-gray-500">引用</p>
+                  <div className="mt-3 border-t border-line pt-2">
+                    <p className="mb-1 text-xs font-medium text-ink-muted">引用</p>
                     <div className="space-y-1">
                       {msg.knowledge_references.slice(0, 3).map((ref, i) => (
-                        <div key={ref.id || i} className="rounded-lg bg-gray-50 p-2 text-xs text-gray-600">
-                          <span className="font-medium text-blue-600">{ref.knowledge_title}</span>
+                        <div key={ref.id || i} className="rounded-lg bg-surface-soft p-2 text-xs text-ink-secondary">
+                          <span className="font-medium text-brand-600">{ref.knowledge_title}</span>
                           <p className="line-clamp-2">{ref.content}</p>
                         </div>
                       ))}
@@ -284,7 +286,7 @@ function Chat() {
       </div>
 
       {/* Input */}
-      <div className="safe-bottom border-t bg-white px-4 py-3">
+      <div className="safe-bottom border-t border-line bg-white px-4 py-3">
         {streamError && (
           <div className="mb-2 rounded-lg bg-red-50 px-2 py-1 text-xs text-red-700">{streamError}</div>
         )}
@@ -300,12 +302,12 @@ function Chat() {
             }}
             rows={1}
             placeholder="输入问题…"
-            className="max-h-32 flex-1 resize-none rounded-2xl border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="max-h-32 flex-1 resize-none rounded-[14px] border border-line bg-surface-soft px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-faint focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
           {streaming ? (
             <button
               onClick={handleStop}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-600"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-red-50 text-red-600"
             >
               <Square className="h-4 w-4 fill-current" />
             </button>
@@ -313,7 +315,7 @@ function Chat() {
             <button
               onClick={handleSend}
               disabled={!input.trim()}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white disabled:opacity-50"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-gradient-to-br from-brand-600 to-brand-400 text-white shadow-brand-lg disabled:opacity-50"
             >
               <Send className="h-4 w-4" />
             </button>
