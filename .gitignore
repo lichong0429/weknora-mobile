@@ -64,3 +64,6 @@ dist-download
 # Environment
 .env
 .env.*
+
+# Vite build temp files
+*.timestamp-*.mjs
