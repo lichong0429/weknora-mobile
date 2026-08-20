@@ -4,9 +4,10 @@ import { useAsync } from '../hooks/useApi.js';
 import { Knowledge } from '../api/endpoints.js';
 import { get, fetchPreview } from '../api/client.js';
 import { getBaseUrl } from '../config.js';
-import { Loader2, AlertCircle, Trash2, RefreshCw, XCircle, Save, ArrowLeft, ChevronDown, ChevronUp, FileText } from 'lucide-react';
+import { Loader2, AlertCircle, Trash2, RefreshCw, XCircle, Save, ArrowLeft, ChevronDown, ChevronUp, FileText, Maximize2, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import KnowledgeChunks from './KnowledgeChunks.jsx';
 
 const PREVIEW_MAX_LEN = 6000;
@@ -31,6 +32,7 @@ function KnowledgeDetail() {
   const [previewDebug, setPreviewDebug] = useState([]);
   const [showPreviewDebug, setShowPreviewDebug] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   // 后端 /knowledge/{id}/preview 直接把原始文件流回（PDF/图片等二进制，或文本/HTML），
   // 这里存检测到的文件类型 + 原始文本/可内联的 blob URL（用于图片预览与下载）
   const [binaryKind, setBinaryKind] = useState(null);
@@ -342,6 +344,14 @@ function KnowledgeDetail() {
                   <span className="text-xs text-gray-400">{preview.length} 字符</span>
                 )}
                 <button onClick={loadPreview} className="text-xs text-blue-600">刷新</button>
+                {preview && (
+                  <button
+                    onClick={() => setFullscreen(true)}
+                    className="flex items-center gap-1 rounded-lg bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700 active:scale-95"
+                  >
+                    <Maximize2 className="h-3.5 w-3.5" /> 全屏
+                  </button>
+                )}
               </div>
             </div>
             {previewLoading ? (
@@ -379,7 +389,8 @@ function KnowledgeDetail() {
                   <img
                     src={binaryKind.blobUrl}
                     alt="preview"
-                    className="max-h-80 w-full rounded-xl object-contain bg-gray-50"
+                    onClick={() => setFullscreen(true)}
+                    className="max-h-80 w-full cursor-pointer rounded-xl object-contain bg-gray-50 active:opacity-80"
                   />
                 ) : (
                   <div className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
@@ -420,28 +431,41 @@ function KnowledgeDetail() {
               </div>
             ) : preview ? (
               <div className="space-y-3">
-                {isHtml ? (
-                  <div
-                    className="prose prose-sm max-w-none max-h-96 overflow-y-auto text-sm text-gray-700"
-                    dangerouslySetInnerHTML={{ __html: cleanHtml(displayPreview) }}
-                  />
-                ) : (
-                  <div className="prose prose-sm max-w-none max-h-96 overflow-y-auto text-sm text-gray-700">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayPreview}</ReactMarkdown>
-                  </div>
-                )}
-                {isTruncated && (
+                <div
+                  onClick={() => setFullscreen(true)}
+                  className="cursor-pointer rounded-xl border border-gray-100 p-3 transition-colors hover:bg-gray-50 active:bg-gray-100"
+                >
+                  {isHtml ? (
+                    <div
+                      className="prose prose-sm max-w-none max-h-96 overflow-y-auto text-sm text-gray-700"
+                      dangerouslySetInnerHTML={{ __html: cleanHtml(displayPreview) }}
+                    />
+                  ) : (
+                    <div className="prose prose-sm max-w-none max-h-96 overflow-y-auto text-sm text-gray-700">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>{displayPreview}</ReactMarkdown>
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center justify-between">
+                  {isTruncated && (
+                    <button
+                      onClick={() => setExpanded(!expanded)}
+                      className="flex items-center gap-1 rounded-xl bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-600"
+                    >
+                      {expanded ? (
+                        <><ChevronUp className="h-4 w-4" /> 收起</>
+                      ) : (
+                        <><ChevronDown className="h-4 w-4" /> 展开全部 ({preview.length} 字符)</>
+                      )}
+                    </button>
+                  )}
                   <button
-                    onClick={() => setExpanded(!expanded)}
-                    className="flex w-full items-center justify-center gap-1 rounded-xl bg-gray-50 py-2 text-xs font-medium text-gray-600"
+                    onClick={() => setFullscreen(true)}
+                    className="ml-auto flex items-center gap-1 rounded-xl bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-600 active:scale-95"
                   >
-                    {expanded ? (
-                      <><ChevronUp className="h-4 w-4" /> 收起</>
-                    ) : (
-                      <><ChevronDown className="h-4 w-4" /> 展开全部 ({preview.length} 字符)</>
-                    )}
+                    <Maximize2 className="h-3.5 w-3.5" /> 全屏阅读
                   </button>
-                )}
+                </div>
               </div>
             ) : (
               <div className="py-6 text-center">
@@ -455,6 +479,38 @@ function KnowledgeDetail() {
             )}
           </div>
         </>
+      )}
+
+      {/* 全屏阅读 Modal */}
+      {fullscreen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-white">
+          <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+            <h3 className="truncate text-base font-semibold text-gray-900">
+              {knowledge.title || knowledge.file_name}
+            </h3>
+            <button
+              onClick={() => setFullscreen(false)}
+              className="rounded-full p-2 hover:bg-gray-100 active:scale-95"
+              aria-label="关闭全屏"
+            >
+              <X className="h-5 w-5 text-gray-600" />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto px-5 py-4">
+            {binaryKind?.isImage ? (
+              <img src={binaryKind.blobUrl} alt="preview" className="mx-auto max-h-full w-auto rounded-xl object-contain" />
+            ) : isHtml ? (
+              <div
+                className="prose prose-sm max-w-none text-sm text-gray-700"
+                dangerouslySetInnerHTML={{ __html: cleanHtml(preview) }}
+              />
+            ) : (
+              <div className="prose prose-sm max-w-none text-sm text-gray-700">
+                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>{preview}</ReactMarkdown>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

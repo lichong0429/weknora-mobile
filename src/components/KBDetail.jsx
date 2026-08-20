@@ -56,6 +56,7 @@ function KBDetail() {
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const observerRef = useRef();
+  const fileInputRef = useRef(null);
   const [selectedDocs, setSelectedDocs] = useState(new Set());
   const [batchMode, setBatchMode] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
@@ -297,42 +298,51 @@ function KBDetail() {
 
           {activeTab === 'docs' && !isFaq && (
             <div className="space-y-3">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={docParams.keyword}
-                  onChange={(e) => handleFilterChange('keyword', e.target.value)}
-                  placeholder="搜索文档…"
-                  className="flex-1 rounded-xl border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-                <button
-                  onClick={() => setShowFilters(!showFilters)}
-                  className={clsx('rounded-xl p-2 shadow-sm', showFilters ? 'bg-blue-50 text-blue-600' : 'bg-white text-gray-600')}
-                  title="筛选"
-                >
-                  <Filter className="h-5 w-5" />
-                </button>
-                <button
-                  onClick={handleRefresh}
-                  disabled={refreshing}
-                  className="rounded-xl bg-white p-2 text-gray-600 shadow-sm disabled:opacity-50"
-                  title="刷新"
-                >
-                  <RefreshCw className={clsx('h-5 w-5', refreshing && 'animate-spin')} />
-                </button>
-                {!isFaq && (
-                  <label className="flex cursor-pointer items-center gap-1 rounded-xl bg-blue-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700">
-                    <Upload className="h-4 w-4" />
-                    {uploading ? '…' : '上传'}
-                    <input type="file" className="hidden" onChange={handleFileChange} />
-                  </label>
-                )}
-                <button
-                  onClick={() => setShowCreateModal(true)}
-                  className="flex items-center gap-1 rounded-xl bg-blue-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
-                >
-                  <Plus className="h-4 w-4" /> {isFaq ? 'FAQ' : '添加'}
-                </button>
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={docParams.keyword}
+                    onChange={(e) => handleFilterChange('keyword', e.target.value)}
+                    placeholder="搜索文档…"
+                    className="min-w-0 flex-1 rounded-xl border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  <button
+                    onClick={() => setShowFilters(!showFilters)}
+                    className={clsx('shrink-0 rounded-xl p-2 shadow-sm', showFilters ? 'bg-blue-50 text-blue-600' : 'bg-white text-gray-600')}
+                    title="筛选"
+                  >
+                    <Filter className="h-5 w-5" />
+                  </button>
+                  <button
+                    onClick={handleRefresh}
+                    disabled={refreshing}
+                    className="shrink-0 rounded-xl bg-white p-2 text-gray-600 shadow-sm disabled:opacity-50"
+                    title="刷新"
+                  >
+                    <RefreshCw className={clsx('h-5 w-5', refreshing && 'animate-spin')} />
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  {!isFaq && (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploading}
+                      className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-gradient-to-br from-brand-600 to-brand-400 px-3 py-2.5 text-sm font-medium text-white shadow-brand-lg hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
+                    >
+                      <Upload className="h-4 w-4" />
+                      {uploading ? '上传中…' : '上传文件'}
+                      <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileChange} />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setShowCreateModal(true)}
+                    className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-white px-3 py-2.5 text-sm font-medium text-brand-600 shadow-card hover:bg-surface-subtle active:scale-[0.98]"
+                  >
+                    <Plus className="h-4 w-4" /> {isFaq ? '新建 FAQ' : '添加知识'}
+                  </button>
+                </div>
               </div>
 
               {uploadError && (
