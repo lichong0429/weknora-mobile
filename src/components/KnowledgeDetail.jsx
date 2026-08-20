@@ -33,6 +33,25 @@ function KnowledgeDetail() {
   const [showPreviewDebug, setShowPreviewDebug] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+
+  // 全屏预览：打开时压入一条 history 状态，Android 系统返回键（popstate）即可退出全屏，
+  // 不会误退出页面；同时 React Router 路由不受影响（pushState 不改 pathname）。
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onPop = () => setFullscreen(false);
+    window.history.pushState({ fullscreen: true }, '');
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [fullscreen]);
+
+  const closeFullscreen = () => {
+    if (window.history.state?.fullscreen) {
+      window.history.back();
+    } else {
+      setFullscreen(false);
+    }
+  };
+
   // 后端 /knowledge/{id}/preview 直接把原始文件流回（PDF/图片等二进制，或文本/HTML），
   // 这里存检测到的文件类型 + 原始文本/可内联的 blob URL（用于图片预览与下载）
   const [binaryKind, setBinaryKind] = useState(null);
@@ -481,22 +500,23 @@ function KnowledgeDetail() {
         </>
       )}
 
-      {/* 全屏阅读 Modal */}
+      {/* 全屏阅读 Modal：顶部安全区适配 + 常驻关闭按钮 + 系统返回键可退出 */}
       {fullscreen && (
         <div className="fixed inset-0 z-50 flex flex-col bg-white">
-          <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-            <h3 className="truncate text-base font-semibold text-gray-900">
-              {knowledge.title || knowledge.file_name}
-            </h3>
-            <button
-              onClick={() => setFullscreen(false)}
-              className="rounded-full p-2 hover:bg-gray-100 active:scale-95"
-              aria-label="关闭全屏"
-            >
-              <X className="h-5 w-5 text-gray-600" />
-            </button>
+          <div className="safe-top shrink-0 border-b border-gray-200 bg-white">
+            <div className="flex items-center justify-between px-4 py-3">
+              <h3 className="min-w-0 flex-1 truncate pr-2 text-base font-semibold text-gray-900">
+                {knowledge.title || knowledge.file_name}
+              </h3>
+              <button
+                onClick={closeFullscreen}
+                className="flex shrink-0 items-center gap-1.5 rounded-full bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 active:scale-95"
+              >
+                <X className="h-4 w-4" /> 关闭
+              </button>
+            </div>
           </div>
-          <div className="flex-1 overflow-y-auto px-5 py-4">
+          <div className="flex-1 overflow-y-auto px-5 pb-safe pt-4">
             {binaryKind?.isImage ? (
               <img src={binaryKind.blobUrl} alt="preview" className="mx-auto max-h-full w-auto rounded-xl object-contain" />
             ) : isHtml ? (

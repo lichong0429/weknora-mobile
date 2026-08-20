@@ -1,22 +1,61 @@
 package com.weknora.mobile;
 
+import android.app.Activity;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.view.View;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 
 public class MainActivity extends AppCompatActivity {
     private WebView webView;
+    private ValueCallback<Uri[]> filePathCallback;
+    private ActivityResultLauncher<Intent> fileChooserLauncher;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+        // 注册文件选择器回调（必须早于 WebView 使用）
+        fileChooserLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {
+                if (filePathCallback == null) return;
+                Uri[] results = null;
+                if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
+                    String dataString = result.getData().getDataString();
+                    if (dataString != null) {
+                        results = new Uri[]{Uri.parse(dataString)};
+                    }
+                }
+                filePathCallback.onReceiveValue(results);
+                filePathCallback = null;
+            }
+        );
+
+        // Android 15+ (targetSdk 35+) 强制 edge-to-edge，内容会侵入状态栏/导航栏。
+        // 给根布局应用系统栏 inset，让 WebView 内容始终落在安全区内。
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.root_layout), (v, windowInsets) -> {
+            Insets insets = windowInsets.getInsets(
+                WindowInsetsCompat.Type.systemBars()
+                    | WindowInsetsCompat.Type.displayCutout()
+            );
+            v.setPadding(insets.left, insets.top, insets.right, insets.bottom);
+            return WindowInsetsCompat.CONSUMED;
+        });
 
         webView = findViewById(R.id.webview);
         WebSettings settings = webView.getSettings();
@@ -66,7 +105,30 @@ public class MainActivity extends AppCompatActivity {
                 return false;
             }
         });
-        webView.setWebChromeClient(new WebChromeClient());
+
+        // 必须重写 onShowFileChooser，否则页面里 <input type="file"> 点击无反应
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(
+                WebView webView,
+                ValueCallback<Uri[]> filePathCallback,
+                FileChooserParams fileChooserParams
+            ) {
+                if (MainActivity.this.filePathCallback != null) {
+                    MainActivity.this.filePathCallback.onReceiveValue(null);
+                }
+                MainActivity.this.filePathCallback = filePathCallback;
+
+                try {
+                    Intent intent = fileChooserParams.createIntent();
+                    fileChooserLauncher.launch(intent);
+                } catch (Exception e) {
+                    MainActivity.this.filePathCallback = null;
+                    return false;
+                }
+                return true;
+            }
+        });
 
         webView.loadUrl("file:///android_asset/web/index.html");
     }
