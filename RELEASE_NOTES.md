@@ -1,22 +1,20 @@
 <!-- 发版前请将本文件内容替换为「当版」说明；若留空或删除本文件，CI 会自动回退为 Full Changelog 链接。 -->
 
-# WeKnora Mobile v1.4.0
+# WeKnora Mobile v1.4.1
 
-**Full Changelog**: https://github.com/lichong0429/weknora-mobile/compare/v1.3.1...v1.4.0
+**Full Changelog**: https://github.com/lichong0429/weknora-mobile/compare/v1.4.0...v1.4.1
 
-## 视觉升级（UI 全面美化）
+## 修复（移动端 4 个功能问题）
 
-- **品牌视觉体系**：新增 `brand` / `surface` / `ink` / `accent` 设计令牌（Tailwind 扩展），主色升级为 indigo-violet 渐变（`#5B5BD6 → #8B5CF6`），暖灰画布底色 `#F6F7F9`。
-- **首页重构**：品牌渐变 Hero 卡片 + 内嵌搜索框、2×2 快捷入口网格、数据概览（知识库/文档/会话统计）、最近访问列表。
-- **知识库列表**：大标题 + 副标题统计、渐变新建按钮、圆角 KB 卡片（图标/置顶/统计/时间）、品牌化空状态与弹窗。
-- **语义搜索**：圆角搜索框（focus 品牌色）、知识库筛选 chips 改为品牌渐变选中态、结果卡片带来源图标与相关度评分徽章。
-- **会话聊天**：用户消息品牌渐变气泡、AI 消息白色圆角气泡（引用区品牌化）、渐变发送按钮、品牌化头部。
-- **底部导航**：悬浮胶囊（Pill）Tab Bar，激活项品牌渐变实心，统一 5 个 Tab。
+- **页面无法滚动到底 / 底部功能栏遮挡**：内容容器改用 `min-h-full` 并加大底部留白；悬浮 Tab Bar 仅在 5 个主 Tab 页面显示，子页面（会话 / 知识详情等）自动隐藏，不再与页面自身输入区叠加遮挡。
+- **条目预览只能半屏 + 渲染异常**：预览内容支持点击进入**全屏阅读**（滚动 + 关闭按钮）；Markdown 渲染补充 `rehype-raw`，文档内嵌 HTML 正常显示；图片预览点击可全屏放大。
+- **搜索框挤掉添加按钮**：知识库文档工具栏拆分为两行——第一行搜索 + 筛选 + 刷新，第二行上传 / 添加按钮均分宽度。
+- **上传按钮点击无反应**：改为按钮 + `ref.click()` 显式触发文件选择，确保点击必响应；上传中显示「上传中…」状态。
 
 ## 版本号
 
-- 应用版本号统一更新为 **1.4.0**（package.json / package-lock.json / 诊断页 APP_VERSION / APK versionCode 2026082000 + versionName 同步）。
+- 应用版本号统一更新为 **1.4.1**（package.json / package-lock.json / 诊断页 APP_VERSION / APK versionCode 2026082022 + versionName 同步）。
 
 ## 校验
 
-- 修改的 7 个文件（tailwind.config / index.css / Layout / Home / KBList / Search / Chat）经 Vite 全量打包校验通过。
+- 修改的 3 个文件（Layout / KBDetail / KnowledgeDetail）经 Vite 全量打包校验通过，PWA Service Worker 正常生成。
