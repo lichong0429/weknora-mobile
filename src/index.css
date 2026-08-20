@@ -31,6 +31,30 @@ html, body, #root {
   scrollbar-width: none;
 }
 
+/* 全屏预览进入动画：淡入 + 上滑 */
+@keyframes fsIn {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 通用弹层进入动画（供其他 modal 复用） */
+@keyframes modalIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 /* Wiki / Markdown 正文排版（替代未安装的 @tailwindcss/typography） */
 .md-body {
   line-height: 1.7;

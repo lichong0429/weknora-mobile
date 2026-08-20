@@ -135,8 +135,21 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) {
-            webView.goBack();
+        // 优先让前端处理返回（如关闭全屏预览/弹层）：前端注册 window.__wbOnBack
+        // 返回 true 表示已消费本次返回；否则走 WebView 历史；再退则退出应用。
+        if (webView != null) {
+            webView.evaluateJavascript(
+                "(typeof window.__wbOnBack === 'function') ? (window.__wbOnBack() === true ? 'true' : 'false') : 'false'",
+                value -> {
+                    String v = value == null ? "" : value.replace("\"", "").trim();
+                    if ("true".equals(v)) return; // 前端已处理（如关闭全屏）
+                    if (webView.canGoBack()) {
+                        webView.goBack();
+                    } else {
+                        MainActivity.super.onBackPressed();
+                    }
+                }
+            );
         } else {
             super.onBackPressed();
         }

@@ -260,7 +260,7 @@ function Chat() {
                   {msg.role === 'user' ? <User className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
                   {msg.role === 'user' ? '我' : 'AI'}
                 </div>
-                <div className="prose prose-sm max-w-none">
+                <div className={msg.role === 'user' ? '' : 'md-body'}>
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {msg.content || (msg.isStream ? '思考中…' : '')}
                   </ReactMarkdown>
