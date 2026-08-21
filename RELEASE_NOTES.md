@@ -1,21 +1,21 @@
 <!-- 发版前请将本文件内容替换为「当版」说明；若留空或删除本文件，CI 会自动回退为 Full Changelog 链接。 -->
 
-# WeKnora Mobile v1.4.3
+# WeKnora Mobile v1.4.4
 
-**Full Changelog**: https://github.com/lichong0429/weknora-mobile/compare/v1.4.2...v1.4.3
+**Full Changelog**: https://github.com/lichong0429/weknora-mobile/compare/v1.4.3...v1.4.4
 
 ## 修复
 
-- **全屏预览打开生硬、无动画**：新增淡入 + 上滑过渡动画（0.28s ease-out），点击全屏阅读不再生硬跳变。
-- **关闭按钮重新设计**：改为右上角圆形轻量图标按钮（灰色圆底 + X），悬停/按压有反馈，与整体视觉统一。
-- **系统返回键直接退出软件（根治）**：WebView 加载 `file://` 时 `history.pushState` 不可用，此前依赖它的方案失效导致返回键直接退出应用。改为原生层在 `onBackPressed` 中先询问前端（`window.__wbOnBack`），全屏打开时返回键先关闭预览，再按一次才退出页面/应用。
-- **Markdown 渲染不完整（根治）**：预览与聊天消息原先使用 `prose` 类，但项目未安装 `@tailwindcss/typography` 插件导致样式完全未生效。统一改用内置 `.md-body` 排版类（标题/列表/代码块/表格/引用/图片均正确渲染），聊天 AI 回复同步修复。
+- **输入法弹出遮挡输入框（根治）**：
+  - Manifest 补充 `windowSoftInputMode="adjustResize"`。
+  - 原生层 insets 监听加入 IME 键盘高度：键盘弹出时根布局自动增加底部 padding，输入框始终可见；输入框聚焦时前端再滚动对齐一次。
+- **模型思考过程混入正文**：SSE 流式解析新增思考字段捕获（`reasoning_content` / `reasoning` / `thinking` / `thought`，兼容 DeepSeek/OpenAI 系与后端自定义字段），思考内容不再混入回答正文。
+- **新增「思考过程」折叠块**：AI 回复中若含思考过程，显示为灰色折叠条（默认折叠），点击「展开」查看完整思考，超长内容限高滚动；历史消息已落库的思考字段同样识别。
 
 ## 版本号
 
-- 应用版本号统一更新为 **1.4.3**（package.json / package-lock.json / 诊断页 APP_VERSION / APK versionCode 2026082100 + versionName 同步）。
+- 应用版本号统一更新为 **1.4.4**（package.json / package-lock.json / 诊断页 APP_VERSION / APK versionCode 2026082111 + versionName 同步）。
 
 ## 校验
 
-- 前端（KnowledgeDetail / Chat / index.css）经 Vite 全量打包校验通过。
-- Android 原生层（MainActivity 返回键桥）代码自查通过，CI 完成 APK 构建。
+- 前端（Chat / Manifest / MainActivity）改动经 Vite 全量打包校验通过，CI 完成 APK 构建。

@@ -47,13 +47,17 @@ public class MainActivity extends AppCompatActivity {
         );
 
         // Android 15+ (targetSdk 35+) 强制 edge-to-edge，内容会侵入状态栏/导航栏。
-        // 给根布局应用系统栏 inset，让 WebView 内容始终落在安全区内。
+        // 给根布局应用系统栏 inset（含 IME 键盘高度），让 WebView 内容始终落在安全区内，
+        // 且键盘弹出时输入框不被遮挡。
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.root_layout), (v, windowInsets) -> {
-            Insets insets = windowInsets.getInsets(
+            Insets bars = windowInsets.getInsets(
                 WindowInsetsCompat.Type.systemBars()
                     | WindowInsetsCompat.Type.displayCutout()
             );
-            v.setPadding(insets.left, insets.top, insets.right, insets.bottom);
+            Insets ime = windowInsets.getInsets(WindowInsetsCompat.Type.ime());
+            boolean imeVisible = windowInsets.isVisible(WindowInsetsCompat.Type.ime());
+            int bottom = bars.bottom + (imeVisible ? ime.bottom : 0);
+            v.setPadding(bars.left, bars.top, bars.right, bottom);
             return WindowInsetsCompat.CONSUMED;
         });
 

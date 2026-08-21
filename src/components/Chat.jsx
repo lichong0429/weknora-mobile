@@ -40,7 +40,11 @@ function Chat() {
     if (messagesRes?.data) {
       // API returns newest first; reverse to chronological order
       const reversed = [...messagesRes.data].reverse();
-      setMessages(reversed);
+      // 兼容历史消息里已落库的思考字段（reasoning_content / reasoning / thinking）
+      setMessages(reversed.map((m) => ({
+        ...m,
+        reasoning: m.reasoning_content || m.reasoning || m.thinking || m.thought || m.reasoning
+      })));
     }
   }, [messagesRes]);
 
@@ -106,12 +110,24 @@ function Chat() {
         const response_type = json.response_type || json.type;
         const { content, knowledge_references, done, id: msgId } = json;
 
+        // 思考过程：兼容 DeepSeek 系 reasoning_content、OpenAI 系 reasoning，以及后端自定义 thinking/thought 字段
+        const reasoningChunk =
+          json.reasoning_content || json.reasoning || json.thinking || json.thought;
+
         if (msgId) setLastMessageId(msgId);
 
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (!last || last.role !== 'assistant') return prev;
           const next = { ...last };
+          // 思考过程单独累加，不混入正文
+          if (response_type === 'reasoning' || response_type === 'thinking' || response_type === 'reasoning_content') {
+            if (typeof content === 'string') {
+              next.reasoning = (next.reasoning || '') + content;
+            }
+          } else if (typeof reasoningChunk === 'string' && reasoningChunk) {
+            next.reasoning = (next.reasoning || '') + reasoningChunk;
+          }
           if (response_type === 'answer' && typeof content === 'string') {
             next.content += content;
           }
@@ -260,6 +276,9 @@ function Chat() {
                   {msg.role === 'user' ? <User className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
                   {msg.role === 'user' ? '我' : 'AI'}
                 </div>
+                {msg.role === 'assistant' && msg.reasoning && (
+                  <ThinkingBlock text={msg.reasoning} />
+                )}
                 <div className={msg.role === 'user' ? '' : 'md-body'}>
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {msg.content || (msg.isStream ? '思考中…' : '')}
@@ -300,6 +319,10 @@ function Chat() {
                 handleSend();
               }
             }}
+            onFocus={(e) => {
+              // 键盘弹出后确保输入框可见（WebView adjustResize 后再次对齐）
+              setTimeout(() => e.target.scrollIntoView({ block: 'nearest' }), 250);
+            }}
             rows={1}
             placeholder="输入问题…"
             className="max-h-32 flex-1 resize-none rounded-[14px] border border-line bg-surface-soft px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-faint focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
@@ -322,6 +345,28 @@ function Chat() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// 思考过程折叠块：默认折叠，点击展开
+function ThinkingBlock({ text }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mb-2 overflow-hidden rounded-lg bg-surface-soft">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[11px] font-medium text-ink-muted"
+      >
+        <span className={clsx('text-[10px] transition-transform', open && 'rotate-90')}>▶</span>
+        思考过程
+        <span className="ml-auto text-[10px] opacity-60">{open ? '收起' : '展开'}</span>
+      </button>
+      {open && (
+        <div className="max-h-48 overflow-y-auto border-t border-line px-2.5 py-2 text-xs leading-relaxed text-ink-muted">
+          {text}
+        </div>
+      )}
     </div>
   );
 }
