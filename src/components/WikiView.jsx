@@ -179,35 +179,43 @@ function MarkdownImage({ src, alt, title }) {
   );
 }
 
+// 用正则局部替换 img/srcset/a 的 URL 与 wiki 链接标记，不做全量 DOM 重排。
+// 理由：DOMParser 全量解析再取 doc.body.innerHTML，在内容含畸形标签/裸 </body> 时会截断，
+// 表现为"显示到某处就停"。正则只替换目标属性，其余原文原样保留。
 function resolveMediaUrls(html) {
   if (!html || typeof html !== 'string') return html;
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, 'text/html');
-  doc.querySelectorAll('img[src], source[srcset]').forEach((el) => {
-    const src = el.getAttribute('src');
-    if (src) el.setAttribute('src', resolveUrl(src));
-    const srcset = el.getAttribute('srcset');
-    if (srcset) {
-      el.setAttribute('srcset', srcset.split(',').map((entry) => {
+
+  // 1) <img src="..."> 与 <source srcset="...">
+  html = html.replace(
+    /(<img\b[^>]*?\bsrc=)(["'])(.*?)\2([^>]*>)/gi,
+    (m, pre, q, src, post) => `${pre}${q}${resolveUrl(src)}${q}${post}`
+  );
+  html = html.replace(
+    /(<source\b[^>]*?\bsrcset=)(["'])(.*?)\2([^>]*>)/gi,
+    (m, pre, q, srcset, post) => {
+      const resolved = srcset.split(',').map((entry) => {
         const parts = entry.trim().split(/\s+/);
         if (!parts[0]) return entry;
         return [resolveUrl(parts[0]), ...parts.slice(1)].join(' ');
-      }).join(', '));
+      }).join(', ');
+      return `${pre}${q}${resolved}${q}${post}`;
     }
-  });
-  // 标记内部 wiki 链接
-  doc.querySelectorAll('a[href]').forEach((el) => {
-    const href = el.getAttribute('href') || '';
-    if (/^https?:\/\//i.test(href) || href.startsWith('//')) return;
-    const isWiki = /\/(wiki|knowledge-bases\/[^/]+\/wiki)\//i.test(href) || /^wiki:/i.test(href);
-    const isInternalRelative = !href.startsWith('#') && !href.startsWith('mailto:') && !href.startsWith('tel:') && !href.startsWith('javascript:');
-    if (isWiki || isInternalRelative) {
-      el.setAttribute('data-wiki-href', href);
-      el.classList.add('wiki-link');
-      el.setAttribute('role', 'link');
+  );
+  // 2) 标记内部 wiki 链接（仅打标，不改变 href）
+  html = html.replace(
+    /(<a\b[^>]*?\bhref=)(["'])(.*?)\2([^>]*>)/gi,
+    (m, pre, q, href, post) => {
+      if (/^https?:\/\//i.test(href) || href.startsWith('//')) return m;
+      const isWiki = /\/(wiki|knowledge-bases\/[^/]+\/wiki)\//i.test(href) || /^wiki:/i.test(href);
+      const isInternalRelative = !href.startsWith('#') && !href.startsWith('mailto:') && !href.startsWith('tel:') && !href.startsWith('javascript:');
+      if (isWiki || isInternalRelative) {
+        // 追加 data-wiki-href 与 class（避免破坏原属性）
+        return `${pre}${q}${href}${q}${post.replace(/>\s*$/, '')} data-wiki-href="${href.replace(/"/g, '&quot;')}" role="link">`;
+      }
+      return m;
     }
-  });
-  return doc.body.innerHTML;
+  );
+  return html;
 }
 
 function WikiView({ kbId }) {
@@ -603,6 +611,13 @@ function WikiView({ kbId }) {
                 </div>
               ) : pageContent ? (
                 <>
+                  {/* 内容完整性提示：后端返回的原始内容字符数（帮助区分后端截断 vs 前端渲染截断） */}
+                  {showPageDebug && (
+                    <div className="mb-3 rounded-lg bg-gray-900 p-2 text-[11px] text-gray-100">
+                      原始内容 {pageContent.length} 字符 · 判定为 {isHtml ? 'HTML' : 'Markdown'} 渲染
+                      {pageContent.length < 2000 && '（较短，疑似后端截断）'}
+                    </div>
+                  )}
                   <div className="md-body" ref={mdBodyRef} onClick={handleContentClick}>
                     {isHtml ? (
                       <div dangerouslySetInnerHTML={{ __html: cleanHtml(resolveMediaUrls(preprocessWikiLinksHtml(pageContent))) }} />
@@ -861,12 +876,15 @@ function isHtmlContent(text) {
   return hasHtmlTags && !hasMarkdown;
 }
 
+// 移除 script/style/iframe 块。注意：只删除「有闭合标签」的块（非贪婪匹配最近的闭合）；
+// 若标签未闭合则整个正则不匹配、原文保留——避免贪婪匹配把后续全部正文误删
+// （那是"显示到某处就停，后面没了"的典型根因）。
 function cleanHtml(html) {
   if (!html || typeof html !== 'string') return '';
   return html
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
-    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, '')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, '')
+    .replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe\s*>/gi, '')
     .replace(/on\w+\s*=/gi, 'data-disabled=')
     .replace(/javascript:/gi, 'disabled:');
 }
