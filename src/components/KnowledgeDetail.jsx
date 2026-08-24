@@ -10,7 +10,9 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import KnowledgeChunks from './KnowledgeChunks.jsx';
 
-const PREVIEW_MAX_LEN = 6000;
+// 预览默认展示上限（字符数）。此前 6000 对长文档仍需手动展开；提升到 30000 覆盖绝大多数文档，
+// 超过时仍显示「展开全部」。fetchPreview 侧已把读取上限从 6064 字节提升到 2MB，二者配合保证完整显示。
+const PREVIEW_MAX_LEN = 30000;
 const PREVIEW_TIMEOUT_MS = 20000;
 
 function withTimeout(promise, ms) {

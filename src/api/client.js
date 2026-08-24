@@ -1,8 +1,9 @@
 import { getApiKey, getBaseUrl } from '../config.js';
 import { logRequest, logResponse } from './debug.js';
 
-// preview 只读头部这么多字节做类型探测 + 预览（文本类据此提前中断下载）
-const PREVIEW_HEAD_LEN = 6064;
+// preview 读取策略：文本类读取完整内容（上限 2MB，覆盖绝大多数文档），
+// 避免 6064 字节时代码把长文档截断成 ~4500 字符（曾导致"预览显示不完整、网页端正常"的反馈）
+const PREVIEW_TEXT_LEN = 2 * 1024 * 1024; // 2MB
 
 function buildUrl(path) {
   const base = getBaseUrl()
@@ -149,9 +150,9 @@ export async function getBlobWithType(path, params = {}) {
   return { blob, contentType, size: blob.size };
 }
 
-// 流式拉取 preview：文本类只读头部（maxTextLen 字节）后立即中断下载，避免大文档整体下载导致超时/OOM；
-// 图片/二进制则读完整 blob 以便内联渲染或下载。返回 { contentType, isBinary, isImage, text?, blob?, size }
-export async function fetchPreview(path, maxTextLen = PREVIEW_HEAD_LEN) {
+// 流式拉取 preview：文本类读取完整内容（上限 2MB），图片/二进制读完整 blob。
+// 返回 { contentType, isBinary, isImage, text?, blob?, size }
+export async function fetchPreview(path, maxTextLen = PREVIEW_TEXT_LEN) {
   const url = new URL(buildUrl(path), window.location.origin);
   const headers = { ...getHeaders(false), Accept: '*/*' };
 
