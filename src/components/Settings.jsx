@@ -3,11 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { useConfig } from '../contexts/ConfigContext.jsx';
 import { KB, Model } from '../api/endpoints.js';
-import { AlertCircle, CheckCircle, Key, Globe, TestTube, Bug, Cpu, Database, Globe as WebSearchIcon, Activity, ChevronRight } from 'lucide-react';
+import { AlertCircle, CheckCircle, Key, Globe, TestTube, Bug, Cpu, Database, Globe as WebSearchIcon, Activity, ChevronRight, Sun, Moon, Monitor } from 'lucide-react';
 
 function Settings() {
   const navigate = useNavigate();
-  const { config, setConfig } = useConfig();
+  const { config, setConfig, theme, setTheme } = useConfig();
   const [baseUrl, setBaseUrl] = useState(config.baseUrl || 'http://localhost:8080');
   const [apiKey, setApiKey] = useState(config.apiKey || '');
   const [testStatus, setTestStatus] = useState(null);
@@ -118,6 +118,40 @@ function Settings() {
       >
         <Bug className="h-4 w-4" /> 诊断与调试
       </button>
+
+      <div className="mt-4 rounded-2xl bg-white p-4 shadow-sm">
+        <h3 className="mb-3 font-semibold text-gray-900">外观</h3>
+        <div className="space-y-2">
+          {[
+            { value: 'system', label: '跟随系统', desc: '随手机深色/浅色模式自动切换', icon: Monitor },
+            { value: 'light', label: '浅色', desc: '始终使用浅色主题', icon: Sun },
+            { value: 'dark', label: '深色', desc: '始终使用深色主题', icon: Moon }
+          ].map((opt) => {
+            const Icon = opt.icon;
+            const active = theme === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setTheme(opt.value)}
+                className={clsx(
+                  'flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors',
+                  active ? 'border-brand-500 bg-brand-50' : 'border-gray-200 hover:bg-gray-50'
+                )}
+              >
+                <div className={clsx('rounded-xl p-2', active ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-600')}>
+                  <Icon className="h-5 w-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className={clsx('font-medium', active ? 'text-brand-700' : 'text-gray-900')}>{opt.label}</p>
+                  <p className="truncate text-xs text-gray-500">{opt.desc}</p>
+                </div>
+                {active && <CheckCircle className="h-5 w-5 shrink-0 text-brand-500" />}
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       <div className="mt-4 rounded-2xl bg-white p-4 shadow-sm">
         <h3 className="mb-2 font-semibold text-gray-900">关于</h3>

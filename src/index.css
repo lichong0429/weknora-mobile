@@ -138,3 +138,75 @@ html, body, #root {
 .md-body th { background: #f9fafb; font-weight: 600; }
 .md-body img { max-width: 100%; height: auto; border-radius: 8px; margin: 0.6em 0; }
 .md-body hr { border: none; border-top: 1px solid #e5e7eb; margin: 1.2em 0; }
+
+/* ============ 深色主题 ============ */
+.dark { color-scheme: dark; }
+
+/* 全局背景 */
+.dark body, .dark #root { background-color: #121317; }
+
+/* 表面 / 卡片背景 */
+.dark .bg-white { background-color: #1C1E24; }
+.dark .bg-white\/90 { background-color: rgba(28, 30, 36, 0.9); }
+.dark .bg-white\/95 { background-color: rgba(28, 30, 36, 0.95); }
+.dark .bg-surface-soft { background-color: #121317; }
+.dark .bg-surface-subtle { background-color: #26282F; }
+.dark .bg-gray-50 { background-color: #1A1C21; }
+.dark .bg-gray-100 { background-color: #26282F; }
+.dark .bg-gray-900 { background-color: #0E0F13; }
+.dark .hover\:bg-gray-50:hover { background-color: #26282F; }
+.dark .hover\:bg-white:hover { background-color: #1C1E24; }
+.dark .active\:bg-gray-100:active { background-color: #2E313A; }
+
+/* 文字颜色 */
+.dark .text-gray-900 { color: #ECEEF3; }
+.dark .text-gray-800 { color: #D8DBE2; }
+.dark .text-gray-700 { color: #C4C8D1; }
+.dark .text-gray-600 { color: #A8ADB8; }
+.dark .text-gray-500 { color: #8A8F99; }
+.dark .text-gray-400 { color: #6E7480; }
+.dark .text-gray-300 { color: #5A5F6A; }
+.dark .text-gray-100 { color: #F0F1F4; }
+.dark .text-ink { color: #ECEEF3; }
+.dark .text-ink-secondary { color: #B4B9C3; }
+.dark .text-ink-muted { color: #8A8F99; }
+.dark .text-ink-faint { color: #5A5F6A; }
+.dark .hover\:text-gray-900:hover { color: #ECEEF3; }
+.dark .hover\:text-ink:hover { color: #ECEEF3; }
+
+/* 边框 */
+.dark .border-gray-300 { border-color: #3A3F48; }
+.dark .border-gray-200 { border-color: #2E323A; }
+.dark .border-gray-100 { border-color: #262A31; }
+.dark .border-line { border-color: #2E323A; }
+
+/* 淡色状态背景（保留色相，压暗） */
+.dark .bg-blue-50 { background-color: rgba(59, 130, 246, 0.16); }
+.dark .bg-red-50 { background-color: rgba(239, 68, 68, 0.16); }
+.dark .bg-green-50 { background-color: rgba(16, 185, 129, 0.16); }
+.dark .bg-amber-50 { background-color: rgba(245, 158, 11, 0.16); }
+.dark .bg-purple-50 { background-color: rgba(139, 92, 246, 0.16); }
+.dark .bg-brand-50 { background-color: rgba(109, 92, 245, 0.16); }
+.dark .bg-blue-100 { background-color: rgba(59, 130, 246, 0.22); }
+.dark .bg-red-100 { background-color: rgba(239, 68, 68, 0.22); }
+
+/* 阴影（暗色下更轻） */
+.dark .shadow-card { box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); }
+.dark .shadow-sm { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4); }
+.dark .shadow-pill { box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5); }
+
+/* Markdown 正文排版暗色 */
+.dark .md-body { color: #C4C8D1; }
+.dark .md-body h1, .dark .md-body h2, .dark .md-body h3,
+.dark .md-body h4, .dark .md-body h5, .dark .md-body h6 { color: #ECEEF3; }
+.dark .md-body h1, .dark .md-body h2 { border-bottom-color: #2E323A; }
+.dark .md-body a { color: #7C8CFF; }
+.dark .md-body .wiki-link, .dark .md-body a.wiki-link { color: #93A3FF; background: rgba(109, 92, 245, 0.18); }
+.dark .md-body strong, .dark .md-body b { color: #ECEEF3; }
+.dark .md-body code { background: #2A2D35; color: #F0A3C4; }
+.dark .md-body pre { background: #0E0F13; color: #E5E7EB; }
+.dark .md-body blockquote { border-left-color: #3A3F48; color: #8A8F99; }
+.dark .md-body th, .dark .md-body td { border-color: #2E323A; }
+.dark .md-body th { background: #26282F; }
+.dark .md-body hr { border-top-color: #2E323A; }
+.dark .md-body img { background: #26282F; }

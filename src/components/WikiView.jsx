@@ -4,6 +4,7 @@ import { useAsync } from '../hooks/useApi.js';
 import { Wiki } from '../api/endpoints.js';
 import { get, getBlob } from '../api/client.js';
 import { getBaseUrl, getConfig } from '../config.js';
+import { resolveUrl, isAuthProtectedSrc, MarkdownImage, hydratedBlobCache, PLACEHOLDER_BLOB } from './MarkdownImage.jsx';
 import {
   BookOpen, Search, Loader2, AlertCircle, FileText, Folder, ChevronRight,
   BarChart3, LayoutGrid, List, ArrowLeft, Bug, Link2
@@ -25,9 +26,6 @@ const PAGE_TYPE_LABELS = {
   comparison: '对比'
 };
 const PAGE_SIZE = 20;
-// 1x1 透明 gif，用作图片加载前的占位骨架，避免布局跳动
-const PLACEHOLDER_BLOB = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-
 // 分层 slug（如 entity/tencent）按段编码，避免把 "/" 也转义
 function encodeSlugPath(slug) {
   if (!slug) return '';
@@ -57,126 +55,6 @@ function preprocessWikiLinksHtml(html) {
     if (!s) return m;
     return `<span class="wiki-content-link" data-slug="${s}" style="color:#2563eb;text-decoration:underline;cursor:pointer;">${t}</span>`;
   });
-}
-
-function getMediaBaseUrl() {
-  const cfg = getConfig();
-  // 优先使用用户配置的绝对地址（去掉末尾斜杠）
-  if (cfg.baseUrl && /^https?:\/\//i.test(cfg.baseUrl)) {
-    return cfg.baseUrl.replace(/\/$/, '');
-  }
-  // 使用 getBaseUrl() 获取 API 地址，但要去掉 /api/v1 后缀得到真正的 base URL
-  const base = getBaseUrl().replace(/\/api\/v1\/?$/, '').replace(/\/$/, '');
-  if (base && /^https?:\/\//i.test(base)) return base;
-  // 兜底：如果 baseUrl 是相对路径
-  if (cfg.baseUrl && typeof cfg.baseUrl === 'string') {
-    const rel = cfg.baseUrl.replace(/\/$/, '');
-    if (!rel.startsWith('/')) return rel;
-  }
-  // 最后兜底：使用 localhost（开发环境）
-  return 'http://localhost:8080';
-}
-
-function resolveUrl(url) {
-  if (!url || typeof url !== 'string') return url;
-  url = url.trim();
-  // 已经是 HTTP/HTTPS 绝对地址
-  if (/^https?:\/\//i.test(url)) return url;
-  // 保留 data: / blob: 等 scheme
-  if (/^[a-z][a-z0-9+.-]*:/i.test(url) && !url.startsWith('local://')) return url;
-
-  const base = getMediaBaseUrl();
-
-  // 处理 local:// 格式的内部文件路径
-  if (url.startsWith('local://')) {
-    // 转换成 /api/v1/files?file_path=local://... 格式
-    return `${base}/api/v1/files?file_path=${encodeURIComponent(url)}`;
-  }
-
-  if (url.startsWith('/')) return `${base}${url}`;
-  return `${base}/${url}`;
-}
-
-// 检测 src 是否需要走认证代理（local:// 等 scheme）
-function isAuthProtectedSrc(src) {
-  return typeof src === 'string' && /^(local|minio|cos|tos|s3|oss|ks3|obs):\/\//i.test(src.trim());
-}
-
-// 已 hydrated 的图片缓存（避免重复请求）
-const hydratedBlobCache = new Map();
-
-// 自定义 Markdown 图片组件
-// 对于 local:// 等需要认证的 scheme，通过 /api/v1/files?file_path= 代理 fetch blob，
-// 转换为 blob: URL 赋给 <img src>（因为 <img> 无法附加 X-API-Key 等自定义 header）
-function MarkdownImage({ src, alt, title }) {
-  const [resolvedSrc, setResolvedSrc] = useState(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    if (!src) {
-      setFailed(true);
-      return undefined;
-    }
-
-    // 已经是 HTTP/HTTPS/data/blob/相对路径 —— 直接走 resolveUrl
-    if (!isAuthProtectedSrc(src)) {
-      setResolvedSrc(resolveUrl(src));
-      setFailed(false);
-      return undefined;
-    }
-
-    // 需要认证的 scheme：fetch → blob URL
-    const cached = hydratedBlobCache.get(src);
-    if (cached) {
-      setResolvedSrc(cached);
-      setFailed(false);
-      return undefined;
-    }
-
-    let cancelled = false;
-    let createdBlobUrl = null;
-    (async () => {
-      try {
-        const blob = await getBlob('/files', { file_path: src });
-        if (cancelled) return;
-        createdBlobUrl = URL.createObjectURL(blob);
-        hydratedBlobCache.set(src, createdBlobUrl);
-        setResolvedSrc(createdBlobUrl);
-        setFailed(false);
-      } catch (err) {
-        if (!cancelled) setFailed(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-      // 注意：blob URL 缓存后会被复用，不要 revoke，下次直接复用
-    };
-  }, [src]);
-
-  if (failed) {
-    return (
-      <span className="my-2 inline-block rounded-lg bg-gray-100 px-3 py-2 text-xs text-gray-500">
-        [图片加载失败]
-      </span>
-    );
-  }
-  if (!resolvedSrc) {
-    return (
-      <span
-        className="my-2 inline-block animate-pulse rounded-lg bg-gray-100"
-        style={{ minWidth: 120, minHeight: 80 }}
-      />
-    );
-  }
-  return (
-    <img
-      src={resolvedSrc}
-      alt={alt || ''}
-      title={title}
-      loading="lazy"
-      className="my-2 max-w-full rounded-lg"
-    />
-  );
 }
 
 // 用正则局部替换 img/srcset/a 的 URL 与 wiki 链接标记，不做全量 DOM 重排。

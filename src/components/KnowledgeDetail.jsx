@@ -9,6 +9,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import KnowledgeChunks from './KnowledgeChunks.jsx';
+import { MarkdownImage } from './MarkdownImage.jsx';
+import { pushBackHandler } from '../backHandler.js';
 
 // 预览默认展示上限（字符数）。此前 6000 对长文档仍需手动展开；提升到 30000 覆盖绝大多数文档，
 // 超过时仍显示「展开全部」。fetchPreview 侧已把读取上限从 6064 字节提升到 2MB，二者配合保证完整显示。
@@ -38,20 +40,14 @@ function KnowledgeDetail() {
 
   const closeFullscreen = () => setFullscreen(false);
 
-  // 全屏预览：通过 window.__wbOnBack 让原生返回键先关全屏再退页面。
-  // （WebView 加载 file:// 时 history.pushState 不可用，不能依赖 popstate）
+  // 全屏预览：通过全局返回栈让原生返回键先关全屏（叠加在 Layout 的页面返回之上），
+  // 关闭全屏后再按返回键才回上一页。
   useEffect(() => {
-    if (fullscreen) {
-      window.__wbOnBack = () => {
-        setFullscreen(false);
-        return true;
-      };
-    } else {
-      window.__wbOnBack = null;
-    }
-    return () => {
-      window.__wbOnBack = null;
-    };
+    if (!fullscreen) return undefined;
+    return pushBackHandler(() => {
+      setFullscreen(false);
+      return true;
+    });
   }, [fullscreen]);
 
   // 后端 /knowledge/{id}/preview 直接把原始文件流回（PDF/图片等二进制，或文本/HTML），
@@ -463,7 +459,7 @@ function KnowledgeDetail() {
                     />
                   ) : (
                     <div className="md-body max-h-96 overflow-y-auto">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>{displayPreview}</ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={{ img: MarkdownImage }}>{displayPreview}</ReactMarkdown>
                     </div>
                   )}
                 </div>
@@ -529,7 +525,7 @@ function KnowledgeDetail() {
               />
             ) : (
               <div className="md-body">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>{preview}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={{ img: MarkdownImage }}>{preview}</ReactMarkdown>
               </div>
             )}
           </div>

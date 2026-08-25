@@ -1,6 +1,8 @@
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { Home, Database, Search, MessageSquare, Settings, ChevronLeft } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useEffect } from 'react';
+import { pushBackHandler } from '../backHandler.js';
 
 const navItems = [
   { to: '/', label: '首页', icon: Home },
@@ -18,6 +20,16 @@ function Layout() {
   // 仅在 5 个主 Tab 页面显示底部导航；子页面（会话/知识详情等）隐藏，
   // 避免与页面自身的输入区/操作区叠加遮挡。
   const showTabBar = ['/', '/kbs', '/search', '/sessions', '/settings'].includes(location.pathname);
+
+  // 手势/系统返回：非首页回上一页（React Router 内部历史），首页返回 false 交给原生退出应用
+  useEffect(() => {
+    const dispose = pushBackHandler(() => {
+      if (location.pathname === '/') return false; // 已在首页，退出应用
+      navigate(-1);
+      return true;
+    });
+    return dispose;
+  }, [location.pathname, navigate]);
 
   return (
     <div className="flex flex-col h-screen w-full bg-surface-soft">
