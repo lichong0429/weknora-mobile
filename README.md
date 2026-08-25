@@ -1,10 +1,10 @@
 # WeKnora Mobile
 
-一个为 WeKnora 打造的移动端 PWA / WebView APK 应用，解决手机浏览器访问 WeKnora 网页布局不便的问题。
+一个为 WeKnora 打造的移动端应用，解决手机访问 WeKnora 网页布局不便的问题。
 
 ## 功能
 
-- 连接自托管的 WeKnora REST API
+- 连接自托管的 WeKnora API
 - 知识库列表、详情、设置（模型、索引策略、Wiki 提取粒度等）
 - 知识库复制 / 移动
 - 知识库统计与检索评估
@@ -15,8 +15,7 @@
 - 文档、网页链接、手动创建知识
 - 文档、智能体、会话、模型、系统信息浏览
 - 诊断与调试页面，方便排查接口问题
-- 响应式移动端布局
-- 可封装为 Android APK（原生 WebView 方案）
+- 响应式移动端布局
 
 ## 为什么使用 WebView APK
 
@@ -25,8 +24,7 @@
 - 不依赖手机默认浏览器是否是 Chrome。
 - 可绕过 HTTPS→HTTP 的混合内容限制与跨域限制。
 - 适合 Tailscale / 内网 / 自托管 HTTP 后端环境。
-
-> 本项目不再维护 TWA（Trusted Web Activity）版本。如果你需要在线 PWA，可直接部署 `dist` 目录到支持 HTTPS 的静态托管。
+
 
 ## 技术栈
 
