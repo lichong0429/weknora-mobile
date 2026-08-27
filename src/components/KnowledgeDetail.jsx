@@ -143,7 +143,8 @@ function KnowledgeDetail() {
             return;
           }
           attempts.push({ source: 'GET /knowledge/{id}/preview (text)', ok: true, status: 'success' });
-          setPreview(text.slice(0, PREVIEW_MAX_LEN));
+          // 完整保存预览数据（fetchPreview 已读满 2MB）；PREVIEW_MAX_LEN 仅控制默认显示长度与「展开全部」按钮
+          setPreview(text);
           setPreviewDebug(attempts);
           setPreviewLoading(false);
           return;

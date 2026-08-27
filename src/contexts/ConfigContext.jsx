@@ -29,6 +29,14 @@ function applyThemeClass(theme) {
   const root = document.documentElement;
   root.classList.toggle('dark', dark);
   root.style.colorScheme = dark ? 'dark' : 'light';
+  // 同步原生层（WebView JS 桥）：控制系统深色模式 + 状态栏/导航栏图标颜色。
+  // 关键：原生系统深色模式决定 WebView 上报的 prefers-color-scheme 值，
+  // 从而让「跟随系统」档真正随系统深色/浅色切换。
+  try {
+    window.WeKnoraBridge?.setTheme(theme);
+  } catch {
+    // 浏览器预览等非原生环境忽略
+  }
   return dark;
 }
 
