@@ -29,11 +29,11 @@ function applyThemeClass(theme) {
   const root = document.documentElement;
   root.classList.toggle('dark', dark);
   root.style.colorScheme = dark ? 'dark' : 'light';
-  // 同步原生层（WebView JS 桥）：控制系统深色模式 + 状态栏/导航栏图标颜色。
-  // 关键：原生系统深色模式决定 WebView 上报的 prefers-color-scheme 值，
-  // 从而让「跟随系统」档真正随系统深色/浅色切换。
+  // 同步原生层（WebView JS 桥）：传 theme + 实际明暗布尔值，控制状态栏/导航栏背景与图标颜色。
+  // 关键：原生 App 主题改 DayNight 后，WebView 的 prefers-color-scheme 才能正确跟随系统，
+  // 「跟随系统」档才会真正随系统深色/浅色切换。
   try {
-    window.WeKnoraBridge?.setTheme(theme);
+    window.WeKnoraBridge?.setTheme(theme, dark);
   } catch {
     // 浏览器预览等非原生环境忽略
   }

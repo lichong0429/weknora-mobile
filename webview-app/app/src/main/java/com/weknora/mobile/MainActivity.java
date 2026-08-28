@@ -2,6 +2,7 @@ package com.weknora.mobile;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.net.Uri;
 import android.os.Bundle;
 import android.webkit.JavascriptInterface;
@@ -26,13 +27,18 @@ public class MainActivity extends AppCompatActivity {
     private WebView webView;
     private ValueCallback<Uri[]> filePathCallback;
     private ActivityResultLauncher<Intent> fileChooserLauncher;
-    // 当前是否为深色（前端通过 JS 桥同步），默认跟随系统判断
+    // 当前是否为深色（前端通过 JS 桥同步）
     private boolean isDark = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+        // 启动时按系统状态初始化明暗，避免启动瞬间状态栏颜色错误（前端随后会经 JS 桥覆盖）
+        isDark = (getResources().getConfiguration().uiMode
+            & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+        applySystemBarStyle();
 
         // 注册文件选择器回调（必须早于 WebView 使用）
         fileChooserLauncher = registerForActivityResult(
@@ -154,6 +160,14 @@ public class MainActivity extends AppCompatActivity {
         webView.loadUrl("file:///android_asset/web/index.html");
     }
 
+    // 系统深色模式切换时（configChanges 含 uiMode，Activity 不重建），
+    // 同步一次状态栏样式。前端 matchMedia 监听会自行联动，这里兜底原生层视觉。
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        applySystemBarStyle();
+    }
+
     // 统一返回处理：优先让前端消费（关闭全屏/回上一页），前端返回 false 才退出应用
     private void handleBackPress() {
         if (webView != null) {
@@ -174,10 +188,12 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // 供前端调用：setTheme('system'|'light'|'dark')，同步系统深色模式与状态栏图标
+    // 供前端调用：setTheme('system'|'light'|'dark', isDark)。
+    // isDark 是前端解析后的实际明暗（system 档由前端根据 prefers-color-scheme 判定），
+    // 原生据此设置状态栏/导航栏背景色与图标颜色。
     private class Bridge {
         @JavascriptInterface
-        public void setTheme(String theme) {
+        public void setTheme(String theme, boolean isDark) {
             runOnUiThread(() -> {
                 boolean dark;
                 if ("dark".equals(theme)) {
@@ -185,23 +201,26 @@ public class MainActivity extends AppCompatActivity {
                 } else if ("light".equals(theme)) {
                     dark = false;
                 } else {
-                    // system：跟随系统深色模式
-                    dark = (getResources().getConfiguration().uiMode
-                        & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
-                        == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+                    dark = isDark;
                 }
-                isDark = dark;
+                MainActivity.this.isDark = dark;
                 applySystemBarStyle();
             });
         }
     }
 
-    // 根据当前明暗设置状态栏/导航栏图标颜色（深色→浅色图标，浅色→深色图标）
+    // 根据当前明暗设置状态栏/导航栏背景色与图标颜色（深色→深背景+浅图标，浅色→浅背景+深图标）
     private void applySystemBarStyle() {
+        int bgColor = isDark ? 0xFF121317 : 0xFFF6F7F9;
+        // edge-to-edge 下状态栏/导航栏区域是 root_layout 的 padding 区，背景取自 root_layout
+        findViewById(R.id.root_layout).setBackgroundColor(bgColor);
+        getWindow().setStatusBarColor(bgColor);
+        getWindow().setNavigationBarColor(bgColor);
+
         WindowInsetsControllerCompat controller =
             WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
         if (controller != null) {
-            controller.setAppearanceLightStatusBars(!isDark); // 浅色主题用深色状态栏图标
+            controller.setAppearanceLightStatusBars(!isDark); // 浅色背景用深色图标
             controller.setAppearanceLightNavigationBars(!isDark);
         }
     }
