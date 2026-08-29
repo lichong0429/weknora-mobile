@@ -102,7 +102,18 @@ function Chat() {
     const controller = new AbortController();
     abortRef.current = controller;
 
+    // 超时检测：如果 15 秒内没收到任何内容，提示用户
+    const timeoutId = setTimeout(() => {
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (!last || last.role !== 'assistant') return prev;
+        if (last.content) return prev; // 已收到内容，不提示
+        return [...prev.slice(0, -1), { ...last, content: '⏳ 等待响应中…服务器可能需要较长时间，请稍候。' }];
+      });
+    }, 15000);
+
     try {
+      let receivedAny = false;
       for await (const ev of chatStream(id, payload, { type: selectedAgentId ? 'agent' : 'knowledge', signal: controller.signal })) {
         const json = ev.json;
         if (!json) continue;
@@ -115,6 +126,7 @@ function Chat() {
           json.reasoning_content || json.reasoning || json.thinking || json.thought;
 
         if (msgId) setLastMessageId(msgId);
+        if ((typeof content === 'string' && content) || (response_type === 'answer')) receivedAny = true;
 
         setMessages((prev) => {
           const last = prev[prev.length - 1];
@@ -142,16 +154,26 @@ function Chat() {
 
         if (done) break;
       }
+      // 流结束但没收到任何内容 → 提示用户
+      if (!receivedAny) {
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (!last || last.role !== 'assistant') return prev;
+          if (last.content) return prev; // 可能有 reasoning 但没 answer
+          return [...prev.slice(0, -1), { ...last, content: '未收到回答。可能原因：①后端未配置大语言模型；②所选知识库无相关内容；③网络连接异常。请在设置页检查服务器连接。' }];
+        });
+      }
     } catch (err) {
       if (err.name !== 'AbortError') {
         setStreamError(err.message || '对话失败');
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (!last || last.role !== 'assistant') return prev;
-          return [...prev.slice(0, -1), { ...last, content: last.content || '[请求失败]' }];
+          return [...prev.slice(0, -1), { ...last, content: last.content || `[请求失败] ${err.message || '未知错误'}` }];
         });
       }
     } finally {
+      clearTimeout(timeoutId);
       setStreaming(false);
       abortRef.current = null;
       refreshMessages();

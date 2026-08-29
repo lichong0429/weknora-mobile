@@ -4,7 +4,7 @@ import { useAsync } from '../hooks/useApi.js';
 import { Wiki } from '../api/endpoints.js';
 import { get, getBlob } from '../api/client.js';
 import { getBaseUrl, getConfig } from '../config.js';
-import { resolveUrl, isAuthProtectedSrc, MarkdownImage, hydratedBlobCache, PLACEHOLDER_BLOB } from './MarkdownImage.jsx';
+import { resolveUrl, isAuthProtectedSrc, isServerSrc, MarkdownImage, hydratedBlobCache, PLACEHOLDER_BLOB } from './MarkdownImage.jsx';
 import {
   BookOpen, Search, Loader2, AlertCircle, FileText, Folder, ChevronRight,
   BarChart3, LayoutGrid, List, ArrowLeft, Bug, Link2
@@ -317,7 +317,7 @@ function WikiView({ kbId }) {
     const targets = imgs.filter((img) => {
       const src = (img.getAttribute('src') || '').trim();
       if (!src) return false;
-      return src.includes('/files?file_path=') || isAuthProtectedSrc(src);
+      return isServerSrc(src);
     });
     if (targets.length === 0) return undefined;
 
@@ -325,28 +325,48 @@ function WikiView({ kbId }) {
     (async () => {
       await Promise.all(targets.map(async (img) => {
         const src = (img.getAttribute('src') || '').trim();
-        // 还原成原始的 local://xxx（resolveMediaUrls 已经把它改成 /api/v1/files?file_path=local://... 了）
-        let filePath = src;
-        try {
-          const u = new URL(src, window.location.origin);
-          const fp = u.searchParams.get('file_path');
-          if (fp) filePath = fp;
-        } catch {}
+
+        // 确定获取路径和参数
+        let fetchPath = '/files';
+        let fetchParams = {};
+        let cacheKey = src;
+
+        if (isAuthProtectedSrc(src)) {
+          // local:// 等特殊 scheme → 通过 /files?file_path= 代理
+          fetchParams = { file_path: src };
+          cacheKey = src;
+        } else {
+          // 已解析的 URL（/files?file_path=... 或 base URL 开头）
+          try {
+            const u = new URL(src, window.location.origin);
+            const fp = u.searchParams.get('file_path');
+            if (fp) {
+              fetchParams = { file_path: fp };
+              cacheKey = fp;
+            } else {
+              fetchPath = u.pathname + u.search;
+              cacheKey = fetchPath;
+            }
+          } catch {
+            fetchPath = src;
+            cacheKey = src;
+          }
+        }
 
         // 先放占位骨架，避免布局跳动
         img.setAttribute('src', PLACEHOLDER_BLOB);
 
-        const cached = hydratedBlobCache.get(filePath);
+        const cached = hydratedBlobCache.get(cacheKey);
         if (cached) {
           if (cancelled) return;
           img.src = cached;
           return;
         }
         try {
-          const blob = await getBlob('/files', { file_path: filePath });
+          const blob = await getBlob(fetchPath, fetchParams);
           if (cancelled) return;
           const blobUrl = URL.createObjectURL(blob);
-          hydratedBlobCache.set(filePath, blobUrl);
+          hydratedBlobCache.set(cacheKey, blobUrl);
           img.src = blobUrl;
         } catch {
           if (cancelled) return;

@@ -289,11 +289,34 @@ export async function* chatStream(sessionId, payload, { type = 'knowledge', sign
     body: JSON.stringify(payload),
     signal
   });
-  if (!res.ok || !res.body) {
+  if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     try { msg = (await res.json()).error?.message || msg; } catch {}
     logResponse({ status: res.status, statusText: res.statusText, error: msg });
     throw new Error(msg);
+  }
+  // 非 SSE 响应（如后端直接返回 JSON）——读取完整 body 作为错误消息
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('text/event-stream') && !contentType.includes('application/octet-stream')) {
+    const text = await res.text();
+    logResponse({ status: res.status, statusText: res.statusText, body: text });
+    // 尝试解析为 JSON 错误
+    try {
+      const json = JSON.parse(text);
+      if (json.error?.message) throw new Error(json.error.message);
+      if (json.message) throw new Error(json.message);
+    } catch (e) {
+      if (e.message && !e.message.startsWith('Unexpected')) throw e;
+    }
+    // 如果不是错误 JSON，尝试把内容当作单次回答返回
+    if (text.trim()) {
+      yield { event: 'message', json: { response_type: 'answer', content: text, done: true } };
+      return;
+    }
+    throw new Error('服务器返回了空响应（非 SSE 流）。请检查后端是否配置了大语言模型。');
+  }
+  if (!res.body) {
+    throw new Error('服务器响应不支持流式读取（ReadableStream 不可用）。');
   }
   logResponse({ status: res.status, statusText: 'SSE stream started', body: '[event-stream]' });
   for await (const ev of sseParser(res.body.getReader())) {
