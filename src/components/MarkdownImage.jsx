@@ -82,6 +82,43 @@ export const hydratedBlobCache = new Map();
 // 1x1 透明 gif 占位骨架
 export const PLACEHOLDER_BLOB = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
+// 图片代理并发上限。Wiki 页面可能有几十张图，若一次性全部并发：
+//   ① 超出 WebView 单域名连接数后请求长时间排队，表现为「图片一直转圈」；
+//   ② 瞬时创建大量 blob 造成内存尖峰。
+// 统一收口到一个小并发池，按序完成，整体观感更稳。
+const IMAGE_FETCH_CONCURRENCY = 4;
+let activeFetches = 0;
+const fetchWaiters = [];
+
+function acquireFetchSlot() {
+  if (activeFetches < IMAGE_FETCH_CONCURRENCY) {
+    activeFetches += 1;
+    return Promise.resolve(releaseFetchSlot);
+  }
+  return new Promise((resolve) => {
+    fetchWaiters.push(() => {
+      activeFetches += 1;
+      resolve(releaseFetchSlot);
+    });
+  });
+}
+
+function releaseFetchSlot() {
+  activeFetches -= 1;
+  const next = fetchWaiters.shift();
+  if (next) next();
+}
+
+// 带并发限制的图片字节拉取（MarkdownImage 与 WikiView hydrate 共用）
+export async function fetchImageBlob(path, params) {
+  const release = await acquireFetchSlot();
+  try {
+    return await getBlob(path, params);
+  } finally {
+    release();
+  }
+}
+
 // 自定义 Markdown 图片组件：所有指向 WeKnora 服务器的图片通过 blob 代理显示，
 // 因为 <img> 标签无法附加 X-API-Key 等自定义 header，服务器会返回 401。
 export function MarkdownImage({ src, alt, title }) {
@@ -151,7 +188,7 @@ export function MarkdownImage({ src, alt, title }) {
     let cancelled = false;
     (async () => {
       try {
-        const blob = await getBlob(fetchPath, fetchParams);
+        const blob = await fetchImageBlob(fetchPath, fetchParams);
         if (cancelled) return;
         // 空 body 也算失败：blob URL 会渲染成 0 字节的破图
         if (!blob || blob.size === 0) throw new Error('服务器返回空内容');

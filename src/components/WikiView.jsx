@@ -2,9 +2,9 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
 import { Wiki } from '../api/endpoints.js';
-import { get, getBlob } from '../api/client.js';
+import { get } from '../api/client.js';
 import { getBaseUrl, getConfig } from '../config.js';
-import { resolveUrl, isAuthProtectedSrc, isServerSrc, MarkdownImage, hydratedBlobCache, PLACEHOLDER_BLOB } from './MarkdownImage.jsx';
+import { resolveUrl, isAuthProtectedSrc, isServerSrc, MarkdownImage, hydratedBlobCache, PLACEHOLDER_BLOB, fetchImageBlob } from './MarkdownImage.jsx';
 import {
   BookOpen, Search, Loader2, AlertCircle, FileText, Folder, ChevronRight,
   BarChart3, LayoutGrid, List, ArrowLeft, Bug, Link2
@@ -363,7 +363,8 @@ function WikiView({ kbId }) {
           return;
         }
         try {
-          const blob = await getBlob(fetchPath, fetchParams);
+          // 走统一并发池，避免整页图片一次性打满连接
+          const blob = await fetchImageBlob(fetchPath, fetchParams);
           if (cancelled) return;
           const blobUrl = URL.createObjectURL(blob);
           hydratedBlobCache.set(cacheKey, blobUrl);
