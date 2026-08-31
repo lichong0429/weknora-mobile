@@ -368,11 +368,13 @@ function WikiView({ kbId }) {
           const blobUrl = URL.createObjectURL(blob);
           hydratedBlobCache.set(cacheKey, blobUrl);
           img.src = blobUrl;
-        } catch {
+        } catch (err) {
           if (cancelled) return;
+          // 失败不写缓存，下次进入可自动重试
+          hydratedBlobCache.delete(cacheKey);
           img.replaceWith(Object.assign(document.createElement('span'), {
             className: 'my-2 inline-block rounded-lg bg-gray-100 px-3 py-2 text-xs text-gray-500',
-            textContent: '[图片加载失败]',
+            textContent: `[图片加载失败] ${err?.message || '未知错误'}`,
           }));
         }
       }));

@@ -30,6 +30,8 @@ function Chat() {
   const [lastMessageId, setLastMessageId] = useState(null);
   const abortRef = useRef(null);
   const bottomRef = useRef(null);
+  // 流式进行中：阻止服务端历史消息回写覆盖正在显示的回答
+  const streamingRef = useRef(false);
 
   const kbs = kbRes?.data || [];
   const agents = agentRes?.data || [];
@@ -37,15 +39,44 @@ function Chat() {
   const session = sessionRes?.data;
 
   useEffect(() => {
-    if (messagesRes?.data) {
-      // API returns newest first; reverse to chronological order
-      const reversed = [...messagesRes.data].reverse();
-      // 兼容历史消息里已落库的思考字段（reasoning_content / reasoning / thinking）
-      setMessages(reversed.map((m) => ({
-        ...m,
-        reasoning: m.reasoning_content || m.reasoning || m.thinking || m.thought || m.reasoning
-      })));
-    }
+    if (!messagesRes?.data) return;
+    // 流式期间不回写：服务端历史里还没有本轮答案，覆盖会把正在显示的回答清空
+    if (streamingRef.current) return;
+
+    // API returns newest first; reverse to chronological order
+    const reversed = [...messagesRes.data].reverse();
+    const server = reversed.map((m) => ({
+      ...m,
+      reasoning: m.reasoning_content || m.reasoning || m.thinking || m.thought || m.reasoning
+    }));
+
+    setMessages((prev) => {
+      const lastLocal = prev[prev.length - 1];
+      const lastServer = server[server.length - 1];
+      const localHasAnswer =
+        lastLocal?.role === 'assistant' && (lastLocal.content || lastLocal.reasoning);
+
+      // 场景 A：服务端已有本轮 assistant 消息但内容为空（尚未落库完成）→ 保留本地内容
+      if (localHasAnswer && lastServer?.role === 'assistant' && !lastServer.content) {
+        return [
+          ...server.slice(0, -1),
+          {
+            ...lastServer,
+            content: lastLocal.content || '',
+            reasoning: lastLocal.reasoning || lastServer.reasoning,
+            knowledge_references:
+              lastLocal.knowledge_references?.length
+                ? lastLocal.knowledge_references
+                : lastServer.knowledge_references
+          }
+        ];
+      }
+      // 场景 B：服务端还没有本轮 assistant 消息 → 把本地答案补在末尾
+      if (localHasAnswer && lastServer?.role !== 'assistant' && lastLocal.content) {
+        return [...server, lastLocal];
+      }
+      return server;
+    });
   }, [messagesRes]);
 
   useEffect(() => {
@@ -56,14 +87,24 @@ function Chat() {
   useEffect(() => {
     const stateKbId = location.state?.knowledge_base_id;
     const stateAgentId = location.state?.agent_id;
-    if (stateKbId && selectedKBs.length === 0) {
-      setSelectedKBs([stateKbId]);
+    if (stateKbId) {
+      setSelectedKBs((prev) => (prev.length ? prev : [stateKbId]));
     }
-    if (stateAgentId && !selectedAgentId) {
+    if (stateAgentId) {
       setSelectedAgentId(stateAgentId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
+
+  // 未从知识库跳转、且服务端只有一个知识库时自动选中，
+  // 避免用户进会话后直接提问却因为没有知识库而拿不到回答
+  useEffect(() => {
+    if (location.state?.knowledge_base_id || location.state?.agent_id) return;
+    if (kbs.length === 1) {
+      setSelectedKBs((prev) => (prev.length ? prev : [kbs[0].id]));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kbs.length]);
 
   const toggleKB = (kbId) => {
     setSelectedKBs((prev) =>
@@ -81,6 +122,7 @@ function Chat() {
     setInput('');
     setStreamError(null);
     setStreaming(true);
+    streamingRef.current = true;
 
     const userMessage = { id: `user-${Date.now()}`, role: 'user', content: query, knowledge_references: [] };
     const assistantMessage = { id: `assistant-${Date.now()}`, role: 'assistant', content: '', knowledge_references: [], isStream: true };
@@ -175,8 +217,10 @@ function Chat() {
     } finally {
       clearTimeout(timeoutId);
       setStreaming(false);
+      streamingRef.current = false;
       abortRef.current = null;
-      refreshMessages();
+      // 延迟回写：给后端一点时间落库，避免拉回的历史里还没有本轮答案
+      setTimeout(() => refreshMessages(), 800);
     }
   };
 
@@ -186,6 +230,7 @@ function Chat() {
       try { await Session.stop(id, lastMessageId); } catch {}
     }
     setStreaming(false);
+    streamingRef.current = false;
   };
 
   const error = sessionError || messagesError;
@@ -277,6 +322,19 @@ function Chat() {
         {error && (
           <div className="mb-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">
             <AlertCircle className="mr-1 inline h-4 w-4" /> {error}
+          </div>
+        )}
+
+        {streamError && (
+          <div className="mb-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">
+            <AlertCircle className="mr-1 inline h-4 w-4" /> {streamError}
+          </div>
+        )}
+
+        {selectedKBs.length === 0 && !selectedAgentId && kbs.length > 0 && (
+          <div className="mb-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-700">
+            <AlertCircle className="mr-1 inline h-4 w-4" />
+            尚未选择知识库：请点右上角齿轮图标，勾选至少一个知识库后再提问。
           </div>
         )}
 
