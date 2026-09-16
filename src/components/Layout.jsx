@@ -3,6 +3,7 @@ import { Home, Database, Search, MessageSquare, Settings, ChevronLeft } from 'lu
 import { clsx } from 'clsx';
 import { useEffect } from 'react';
 import { pushBackHandler } from '../backHandler.js';
+import ErrorBoundary from './ErrorBoundary.jsx';
 
 const navItems = [
   { to: '/', label: '首页', icon: Home },
@@ -55,7 +56,11 @@ function Layout() {
 
       <main className="flex-1 overflow-y-auto no-scrollbar">
         <div className="mx-auto flex min-h-full w-full max-w-md flex-col pb-40">
-          <Outlet />
+          {/* 页面级错误边界：单个页面渲染异常不再拖垮整棵树（此前会导致全白屏且无法返回）。
+              key 用路径，切到其他页面时自动重新挂载并清空错误状态。 */}
+          <ErrorBoundary key={location.pathname} onBack={() => navigate(-1)}>
+            <Outlet />
+          </ErrorBoundary>
         </div>
       </main>
 

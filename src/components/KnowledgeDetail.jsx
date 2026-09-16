@@ -232,6 +232,19 @@ function KnowledgeDetail() {
     }
   };
 
+  // ⚠️ 以下计算与 useImageHydrate 必须位于所有提前 return 之前。
+  // 否则首帧（loading=true，命中下面的 return）不执行这些 hook，
+  // 数据到达后的次帧才执行，hook 数量变化会让 React 抛错并卸载整棵树，
+  // 表现为「页面一片空白且返回不了」。新增 hook 时务必保持在 return 之前。
+  const isHtml = isHtmlContent(preview);
+  const displayPreview = expanded ? preview : preview.slice(0, PREVIEW_MAX_LEN);
+  const isTruncated = preview.length > PREVIEW_MAX_LEN;
+
+  // HTML 路径的图片 hydrate：把容器内的服务器图片换成经过鉴权代理的 blob。
+  // Markdown 路径不需要（由 components.img = MarkdownImage 处理）。
+  useImageHydrate(previewHtmlRef, displayPreview, isHtml);
+  useImageHydrate(fullscreenHtmlRef, preview, isHtml && fullscreen);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12 text-gray-500">
@@ -258,15 +271,6 @@ function KnowledgeDetail() {
       </div>
     );
   }
-
-  const isHtml = isHtmlContent(preview);
-  const displayPreview = expanded ? preview : preview.slice(0, PREVIEW_MAX_LEN);
-  const isTruncated = preview.length > PREVIEW_MAX_LEN;
-
-  // HTML 路径的图片 hydrate：把容器内的服务器图片换成经过鉴权代理的 blob。
-  // Markdown 路径不需要（由 components.img = MarkdownImage 处理）。
-  useImageHydrate(previewHtmlRef, displayPreview, isHtml);
-  useImageHydrate(fullscreenHtmlRef, preview, isHtml && fullscreen);
 
   return (
     <div className="p-4">
