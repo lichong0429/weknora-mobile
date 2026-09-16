@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
 import { useConfig } from '../contexts/ConfigContext.jsx';
 import { KB } from '../api/endpoints.js';
@@ -10,15 +10,17 @@ import KBCopyMoveModal from './KBCopyMoveModal.jsx';
 
 function KBList() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { config } = useConfig();
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [type, setType] = useState('document');
   const [activeKb, setActiveKb] = useState(null);
+  // 依赖 location.key：每次进入本页重新拉取，避免始终显示旧数据
   const { data, loading, error, run, setData } = useAsync(
     () => KB.list(),
-    [config.baseUrl, config.apiKey]
+    [location.key, config.baseUrl, config.apiKey]
   );
 
   const kbs = extractList(data);
@@ -46,7 +48,9 @@ function KBList() {
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-[26px] leading-9 font-bold text-ink">知识库</h2>
-          <p className="mt-0.5 text-xs text-ink-muted">12 个知识库 · 3,842 文档</p>
+          <p className="mt-0.5 text-xs text-ink-muted">
+            {kbs.length} 个知识库 · {kbs.reduce((sum, k) => sum + (Number(k.knowledge_count) || 0), 0).toLocaleString('en-US')} 文档
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <button

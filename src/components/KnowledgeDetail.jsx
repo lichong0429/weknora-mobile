@@ -9,7 +9,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import KnowledgeChunks from './KnowledgeChunks.jsx';
-import { MarkdownImage } from './MarkdownImage.jsx';
+import { MarkdownImage, resolveImageUrls } from './MarkdownImage.jsx';
+import { useImageHydrate } from '../hooks/useImageHydrate.js';
 import { pushBackHandler } from '../backHandler.js';
 
 // 预览默认展示上限（字符数）。此前 6000 对长文档仍需手动展开；提升到 30000 覆盖绝大多数文档，
@@ -53,6 +54,11 @@ function KnowledgeDetail() {
   // 后端 /knowledge/{id}/preview 直接把原始文件流回（PDF/图片等二进制，或文本/HTML），
   // 这里存检测到的文件类型 + 原始文本/可内联的 blob URL（用于图片预览与下载）
   const [binaryKind, setBinaryKind] = useState(null);
+
+  // HTML 预览路径的内容容器。dangerouslySetInnerHTML 渲染出的 <img> 由浏览器直接创建，
+  // 无法走 React 的 MarkdownImage 组件，需要手动扫 DOM 把服务器图片转 blob（useImageHydrate）
+  const previewHtmlRef = useRef(null);
+  const fullscreenHtmlRef = useRef(null);
 
   // 用 ref 持有最新的 binaryKind，避免 loadPreview 把它放进依赖导致重渲染死循环
   const binaryKindRef = useRef(binaryKind);
@@ -257,6 +263,11 @@ function KnowledgeDetail() {
   const displayPreview = expanded ? preview : preview.slice(0, PREVIEW_MAX_LEN);
   const isTruncated = preview.length > PREVIEW_MAX_LEN;
 
+  // HTML 路径的图片 hydrate：把容器内的服务器图片换成经过鉴权代理的 blob。
+  // Markdown 路径不需要（由 components.img = MarkdownImage 处理）。
+  useImageHydrate(previewHtmlRef, displayPreview, isHtml);
+  useImageHydrate(fullscreenHtmlRef, preview, isHtml && fullscreen);
+
   return (
     <div className="p-4">
       <div className="mb-4 rounded-2xl bg-white p-4 shadow-sm">
@@ -455,8 +466,9 @@ function KnowledgeDetail() {
                 >
                   {isHtml ? (
                     <div
+                      ref={previewHtmlRef}
                       className="md-body max-h-96 overflow-y-auto"
-                      dangerouslySetInnerHTML={{ __html: cleanHtml(displayPreview) }}
+                      dangerouslySetInnerHTML={{ __html: cleanHtml(resolveImageUrls(displayPreview)) }}
                     />
                   ) : (
                     <div className="md-body max-h-96 overflow-y-auto">
@@ -521,8 +533,9 @@ function KnowledgeDetail() {
               <img src={binaryKind.blobUrl} alt="preview" className="mx-auto max-h-full w-auto rounded-xl object-contain" />
             ) : isHtml ? (
               <div
+                ref={fullscreenHtmlRef}
                 className="md-body"
-                dangerouslySetInnerHTML={{ __html: cleanHtml(preview) }}
+                dangerouslySetInnerHTML={{ __html: cleanHtml(resolveImageUrls(preview)) }}
               />
             ) : (
               <div className="md-body">

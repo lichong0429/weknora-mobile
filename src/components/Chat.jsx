@@ -9,6 +9,8 @@ import {
 import { clsx } from 'clsx';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
+import { MarkdownImage } from './MarkdownImage.jsx';
 
 function Chat() {
   const { id } = useParams();
@@ -360,7 +362,11 @@ function Chat() {
                   <ThinkingBlock text={msg.reasoning} />
                 )}
                 <div className={msg.role === 'user' ? '' : 'md-body'}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    rehypePlugins={[rehypeRaw]}
+                    components={{ img: MarkdownImage }}
+                  >
                     {msg.content || (msg.isStream ? '思考中…' : '')}
                   </ReactMarkdown>
                 </div>

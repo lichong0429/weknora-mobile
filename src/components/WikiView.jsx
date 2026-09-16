@@ -4,7 +4,8 @@ import { useAsync } from '../hooks/useApi.js';
 import { Wiki } from '../api/endpoints.js';
 import { get } from '../api/client.js';
 import { getBaseUrl, getConfig } from '../config.js';
-import { resolveUrl, isAuthProtectedSrc, isServerSrc, MarkdownImage, hydratedBlobCache, PLACEHOLDER_BLOB, fetchImageBlob } from './MarkdownImage.jsx';
+import { MarkdownImage, resolveImageUrls } from './MarkdownImage.jsx';
+import { useImageHydrate } from '../hooks/useImageHydrate.js';
 import {
   BookOpen, Search, Loader2, AlertCircle, FileText, Folder, ChevronRight,
   BarChart3, LayoutGrid, List, ArrowLeft, Bug, Link2
@@ -63,22 +64,9 @@ function preprocessWikiLinksHtml(html) {
 function resolveMediaUrls(html) {
   if (!html || typeof html !== 'string') return html;
 
-  // 1) <img src="..."> 与 <source srcset="...">
-  html = html.replace(
-    /(<img\b[^>]*?\bsrc=)(["'])(.*?)\2([^>]*>)/gi,
-    (m, pre, q, src, post) => `${pre}${q}${resolveUrl(src)}${q}${post}`
-  );
-  html = html.replace(
-    /(<source\b[^>]*?\bsrcset=)(["'])(.*?)\2([^>]*>)/gi,
-    (m, pre, q, srcset, post) => {
-      const resolved = srcset.split(',').map((entry) => {
-        const parts = entry.trim().split(/\s+/);
-        if (!parts[0]) return entry;
-        return [resolveUrl(parts[0]), ...parts.slice(1)].join(' ');
-      }).join(', ');
-      return `${pre}${q}${resolved}${q}${post}`;
-    }
-  );
+  // 1) <img src="..."> 与 <source srcset="..."> —— 复用公共实现，避免与
+  //    KnowledgeDetail 各维护一份
+  html = resolveImageUrls(html);
   // 2) 标记内部 wiki 链接（仅打标，不改变 href）
   html = html.replace(
     /(<a\b[^>]*?\bhref=)(["'])(.*?)\2([^>]*>)/gi,
@@ -308,80 +296,9 @@ function WikiView({ kbId }) {
   // useEffect 那段代码从来没被执行过；1.2.2 改了空状态 UI 之后点进去立刻崩。
   const pageContent = pageDetail?.content || pageDetail?.body || pageDetail?.markdown || pageDetail?.text || pageDetail?.html || '';
   const isHtml = isHtmlContent(pageContent);
-  useEffect(() => {
-    const root = mdBodyRef.current;
-    if (!root || !pageContent) return undefined;
-    if (!isHtml) return undefined; // Markdown 路径由 MarkdownImage 组件自己处理
-
-    const imgs = Array.from(root.querySelectorAll('img'));
-    const targets = imgs.filter((img) => {
-      const src = (img.getAttribute('src') || '').trim();
-      if (!src) return false;
-      return isServerSrc(src);
-    });
-    if (targets.length === 0) return undefined;
-
-    let cancelled = false;
-    (async () => {
-      await Promise.all(targets.map(async (img) => {
-        const src = (img.getAttribute('src') || '').trim();
-
-        // 确定获取路径和参数
-        let fetchPath = '/files';
-        let fetchParams = {};
-        let cacheKey = src;
-
-        if (isAuthProtectedSrc(src)) {
-          // local:// 等特殊 scheme → 通过 /files?file_path= 代理
-          fetchParams = { file_path: src };
-          cacheKey = src;
-        } else {
-          // 已解析的 URL（/files?file_path=... 或 base URL 开头）
-          try {
-            const u = new URL(src, window.location.origin);
-            const fp = u.searchParams.get('file_path');
-            if (fp) {
-              fetchParams = { file_path: fp };
-              cacheKey = fp;
-            } else {
-              fetchPath = u.pathname + u.search;
-              cacheKey = fetchPath;
-            }
-          } catch {
-            fetchPath = src;
-            cacheKey = src;
-          }
-        }
-
-        // 先放占位骨架，避免布局跳动
-        img.setAttribute('src', PLACEHOLDER_BLOB);
-
-        const cached = hydratedBlobCache.get(cacheKey);
-        if (cached) {
-          if (cancelled) return;
-          img.src = cached;
-          return;
-        }
-        try {
-          // 走统一并发池，避免整页图片一次性打满连接
-          const blob = await fetchImageBlob(fetchPath, fetchParams);
-          if (cancelled) return;
-          const blobUrl = URL.createObjectURL(blob);
-          hydratedBlobCache.set(cacheKey, blobUrl);
-          img.src = blobUrl;
-        } catch (err) {
-          if (cancelled) return;
-          // 失败不写缓存，下次进入可自动重试
-          hydratedBlobCache.delete(cacheKey);
-          img.replaceWith(Object.assign(document.createElement('span'), {
-            className: 'my-2 inline-block rounded-lg bg-gray-100 px-3 py-2 text-xs text-gray-500',
-            textContent: `[图片加载失败] ${err?.message || '未知错误'}`,
-          }));
-        }
-      }));
-    })();
-    return () => { cancelled = true; };
-  }, [pageContent, isHtml]);
+  // HTML 路径的图片 hydrate：把容器内的服务器图片换成经鉴权代理的 blob。
+  // Markdown 路径不需要（由 components.img = MarkdownImage 处理）。
+  useImageHydrate(mdBodyRef, pageContent, isHtml);
 
   // 处理内容中的链接点击 - 事件委托方式，模仿网页版实现
   const handleContentClick = useCallback((e) => {

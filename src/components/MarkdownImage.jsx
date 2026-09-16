@@ -76,6 +76,50 @@ export function imageCacheKey(src) {
   }
 }
 
+// 处理 HTML 字符串里的图片地址：把 <img src> 与 <source srcset> 中的相对路径 /
+// 内部存储引用统一转成可请求的绝对地址。
+// 用正则做局部替换而不是 DOMParser 全量重排——内容含畸形标签或裸 </body> 时，
+// DOMParser 会在该处截断，表现为「显示到某处就停」。
+// 注意：内部存储引用（resource:// 等）会被 resolveUrl 转成 /files?file_path=…，
+// 随后由 useImageHydrate 扫 DOM 走鉴权代理取字节。
+export function resolveImageUrls(html) {
+  if (!html || typeof html !== 'string') return html;
+
+  let out = html.replace(
+    /(<img\b[^>]*?\bsrc=)(["'])(.*?)\2([^>]*>)/gi,
+    (m, pre, q, src, post) => `${pre}${q}${resolveUrl(src)}${q}${post}`
+  );
+  out = out.replace(
+    /(<source\b[^>]*?\bsrcset=)(["'])(.*?)\2([^>]*>)/gi,
+    (m, pre, q, srcset, post) => {
+      const resolved = srcset
+        .split(',')
+        .map((entry) => {
+          const parts = entry.trim().split(/\s+/);
+          if (!parts[0]) return entry;
+          return [resolveUrl(parts[0]), ...parts.slice(1)].join(' ');
+        })
+        .join(', ');
+      return `${pre}${q}${resolved}${q}${post}`;
+    }
+  );
+  return out;
+}
+
+// 把取图失败的错误翻译成可操作的提示。
+// /files 代理对「知识库受限」的 API Key 会直接返回 403（后端 storageurl 明确拒绝），
+// 这是图片全站不显示时最常见的外部原因，需要在界面上直接说清楚。
+export function describeImageError(err) {
+  const msg = err?.message || '未知错误';
+  if (/\b403\b/.test(msg)) {
+    return `${msg}（API Key 权限不足：/files 代理要求全权限 Key，知识库受限的 Key 会被拒绝）`;
+  }
+  if (/\b401\b/.test(msg)) {
+    return `${msg}（API Key 无效，请到设置页检查）`;
+  }
+  return msg;
+}
+
 // 已 hydrated 的图片缓存（避免重复请求）
 export const hydratedBlobCache = new Map();
 
@@ -200,7 +244,7 @@ export function MarkdownImage({ src, alt, title }) {
       } catch (err) {
         if (cancelled) return;
         setFailed(true);
-        setErrorMsg(err?.message || '未知错误');
+        setErrorMsg(describeImageError(err));
       }
     })();
     return () => {
