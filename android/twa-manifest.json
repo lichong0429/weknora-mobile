@@ -17,7 +17,7 @@
   "maskableIconUrl": "https://cb058c0dd2a44848872eb311faca6577.app.codebuddy.work/icon.svg",
   "splashScreenFadeOutDuration": 300,
   "signingKey": {
-    "path": "E:\\24221\\Documents\\WorkBuddy\\2026-07-04-00-54-52\\weknora-mobile\\android\\android.keystore",
+    "path": "./android.keystore",
     "alias": "android"
   },
   "appVersionName": "1",

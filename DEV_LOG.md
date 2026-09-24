@@ -27,7 +27,7 @@
 | 构建产物托管 | CloudStudio 静态站点部署 |
 | Android 封装 | 方案 A：Bubblewrap（TWA）<br>方案 B：原生 Android WebView（备选） |
 | Android 构建 | Gradle 8.11.1 + Android Gradle Plugin 8.9.1 |
-| 签名 | 项目内自动生成 `android/android.keystore`（密码：`weknora123`） |
+| 签名 | 项目内自动生成 `android/android.keystore`（密码见本机密钥管理，不入库） |
 
 ---
 
@@ -128,7 +128,7 @@
 
 ## 6. 已知限制与注意事项
 
-1. **签名密钥**：当前使用自动生成的 `android/android.keystore`（密码 `weknora123`），正式发布前必须替换为正式签名密钥，否则应用商店无法上架且更新会冲突。
+1. **签名密钥**：当前使用自动生成的 `android/android.keystore`（密码见本机密钥管理，不入库），正式发布前必须替换为正式签名密钥，否则应用商店无法上架且更新会冲突。
 2. **TWA 版本**：依赖 Chrome 默认浏览器和域名的 Digital Asset Links 验证；在 Tailscale/HTTP 环境下不推荐使用。
 3. **WebView 版本**：虽然兼容性好，但体积更大（4.6 MB vs 0.9 MB），且 PWA 更新需要重新构建 APK。
 4. **CORS**：如果用户后续将 WeKnora 部署为 HTTPS 公网域名，且希望使用在线 PWA 而非嵌入 APK，仍需在 WeKnora 后端配置正确的 CORS 源。
@@ -158,7 +158,7 @@ export GRADLE_USER_HOME="../.gradle-home"
 export JAVA_HOME="D:/Program Files/Java/jdk-18.0.2.1"
 export PATH="$JAVA_HOME/bin:$PATH"
 node ../node_modules/@bubblewrap/cli/bin/bubblewrap.js build \
-  --config=C:/Users/24221/.bubblewrap/config.json
+  --config="$HOME/.bubblewrap/config.json"
 ```
 
 ### 构建 WebView 版
@@ -182,8 +182,8 @@ export PATH="$JAVA_HOME/bin:$PATH"
 
 ../.android-sdk/build-tools/35.0.0/apksigner sign \
   --ks ../android/android.keystore \
-  --ks-pass pass:weknora123 \
-  --key-pass pass:weknora123 \
+  --ks-pass pass:<keystore-password> \
+  --key-pass pass:<key-password> \
   --out app/build/outputs/apk/release/app-release.apk \
   app/build/outputs/apk/release/app-release-unsigned.apk
 ```

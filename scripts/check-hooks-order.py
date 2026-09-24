@@ -24,7 +24,10 @@ import re
 import glob
 import os
 
-CWD = r'E:/24221/Documents/WorkBuddy/2026-08-19-22-50-17/weknora-mobile/src'
+# 以脚本自身位置为准定位 src 目录，避免写死绝对路径
+# （写死路径会在别人机器上静默扫不到文件，看起来"全部通过"）
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CWD = os.path.join(ROOT, 'src')
 files = sorted(glob.glob(os.path.join(CWD, 'components/*.jsx')) +
                glob.glob(os.path.join(CWD, 'hooks/*.js')) +
                glob.glob(os.path.join(CWD, 'contexts/*.jsx')))

@@ -35,6 +35,11 @@ dist-download
 .gradle-home
 
 # APK signing / intermediate
+#
+# ⚠️ 已知例外（安全债）：android-ci/ci.keystore 曾被 `git add -f` 强制提交，
+#    绕过了下面的规则；其口令也明文写在 webview-app/app/build.gradle 中。
+#    本仓库为 PUBLIC，等于签名密钥与口令同时公开 —— 任何人都能签出「同签名」APK。
+#    任何新增密钥/口令文件都不要提交；轮换前请勿删除该文件，否则 CI 会构建失败。
 *.jks
 *.keystore
 /android/app/build
