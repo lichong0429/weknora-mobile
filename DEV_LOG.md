@@ -618,3 +618,44 @@ export PATH="$JAVA_HOME/bin:$PATH"
 - 发现 Android `versionCode` 仍为 `15`、`versionName` 仍为 `1.1.1`，导致系统设置里显示旧版本；Diagnostics 页面硬编码版本号为 `v2.1.0-20260704`。
 - 修复：`webview-app/app/build.gradle` 更新为 `versionCode 16 / versionName "1.1.2"`；`src/components/Diagnostics.jsx` 的 `APP_VERSION` 同步为 `v1.1.2`。
 - 重新构建、签名并替换 GitHub Release 中的 APK asset。
+
+---
+
+## 发布前安全体检（2026-09-24 新增）
+
+### 背景
+
+仓库是 **PUBLIC**，已发生过两类真实泄露：
+
+1. 发布说明里写了内网 NAS 地址 → 仓库文件与 Release 页面同时暴露（已清除并重写 Release 正文）；
+2. `android-ci/ci.keystore` 被 `git add -f` 强制提交（绕过 `.gitignore` 的 `*.keystore`），签名口令明文写在 `build.gradle` → 密钥与口令同时公开。
+
+这类内容一旦推送就是"泼出去的水"：删文件也留在历史提交里。
+
+### 用法
+
+```bash
+npm run check:secrets            # 体检全部受控文件（会随推送公开的文件）
+npm run check:secrets -- --staged   # 只体检已暂存文件
+npm run check:secrets:self-test     # 规则自检：用正/反样本验证每条规则真能命中
+npm run check                   # 体检 + hook 顺序检查
+```
+
+- **阻断项**：内网/Tailscale 地址、口令与密钥赋值、凭据字面量（ghp_/sk-/AKIA…）、私钥内容、新增密钥文件
+- **待确认项**：本机绝对路径（含用户名）、个人邮箱
+- **已知例外**：必须写明理由与「移除条件」，每次运行都会打印，不做静默豁免
+- 命中内容一律**打码输出**，避免体检日志本身变成新的泄露源
+- 已接入 CI：推送 tag 触发构建前先跑自检 + 体检，有问题直接构建失败
+
+### 为什么要自检
+
+规则写错时最危险的结果是「静默全绿」——看起来通过了，实际什么都没查。
+本地开发时自检就抓出两个真实缺陷：Gradle 的 `storePassword 'xxx'`（无等号）漏检；
+中文占位说明 `"见本机密钥管理"` 被误判为口令。规则改动后务必跑 `check:secrets:self-test`。
+
+### 待偿安全债
+
+`android-ci/ci.keystore` 与其明文口令仍是公开状态（CI 签名依赖，移除会使构建失败）。
+彻底消除需**轮换密钥**：生成新 keystore → 存入 GitHub Secret → `build.gradle` 改读环境变量 →
+`git rm --cached android-ci/ci.keystore` 并删除 `scripts/check-secrets.mjs` 中的两条例外。
+代价：新签名与旧 APK 不同，**必须卸载重装**（会清空 WebView localStorage 中的服务地址、API Key、主题设置）。

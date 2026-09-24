@@ -39,6 +39,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # 发布前安全体检：仓库是 PUBLIC，任何被跟踪文件里的内网地址 / 口令明文 /
+      # 新增密钥文件都会随 tag 一起公开，且事后无法从历史中撤回 —— 这里让它直接构建失败。
+      # 已知安全债（ci.keystore 与其明文口令）在 KNOWN_EXCEPTIONS 中登记，会打印但不阻断。
+      - name: Security preflight
+        run: |
+          node scripts/check-secrets.mjs --self-test   # 先验证规则本身有效（规则写错会静默全绿）
+          node scripts/check-secrets.mjs
+
       - name: Build web assets
         run: |
           rm -rf dist-webview node_modules/.vite

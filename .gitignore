@@ -72,3 +72,6 @@ dist-download
 
 # Vite build temp files
 *.timestamp-*.mjs
+
+# 机器本地构建配置（含本机绝对路径，不入库）
+.bubblewrap/config.json

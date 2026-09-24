@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "node server-proxy.js"
+    "start": "node server-proxy.js",
+    "check:secrets": "node scripts/check-secrets.mjs",
+    "check:hooks": "python scripts/check-hooks-order.py",
+    "check:secrets:self-test": "node scripts/check-secrets.mjs --self-test",
+    "check": "node scripts/check-secrets.mjs && python scripts/check-hooks-order.py"
   },
   "dependencies": {
     "clsx": "^2.0.0",
