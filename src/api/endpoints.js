@@ -23,7 +23,10 @@ export const Knowledge = {
   update: (id, body) => put(`/knowledge/${id}`, body),
   updateManual: (id, body) => put(`/knowledge/manual/${id}`, body),
   remove: (id) => del(`/knowledge/${id}`),
-  batchRemove: (kbId, ids) => post('/knowledge/batch-delete', { kbId, ids }),
+  // 后端 schema 为 BatchDeleteKnowledgeRequest { kb_id, ids }（snake_case），
+  // 早期这里发的是 camelCase 的 kbId，binding:"required" 会直接 400。
+  batchRemove: (kbId, ids) => post('/knowledge/batch-delete', { kb_id: kbId, ids }),
+  batchReparse: (kbId, ids) => post('/knowledge/batch-reparse', { kb_id: kbId, ids }),
   reparse: (id) => post(`/knowledge/${id}/reparse`),
   cancelParse: (id) => post(`/knowledge/${id}/cancel-parse`),
   preview: (id) => getText(`/knowledge/${id}/preview`),

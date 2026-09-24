@@ -9,11 +9,16 @@ import FAQView from './FAQView.jsx';
 import TagManager from './TagManager.jsx';
 import CreateKnowledgeModal from './CreateKnowledgeModal.jsx';
 import KBEval from './KBEval.jsx';
+import UploadTaskPanel from './UploadTaskPanel.jsx';
+import { useUploadQueue } from '../hooks/useUploadQueue.js';
+import { useParsePolling } from '../hooks/useParsePolling.js';
+import { isInFlight, statusMeta, formatBytes } from '../utils/parseStatus.js';
 import {
   FileText, Search, Settings, Upload, Loader2, AlertCircle,
   ChevronRight, Trash2, File, Link, PenLine, Database, RefreshCw,
   Filter, X, CheckSquare, Square, BookOpen, Share2,
-  Tag as TagIcon, HelpCircle, Plus, BarChart3, MessageSquare
+  Tag as TagIcon, HelpCircle, Plus, BarChart3, MessageSquare,
+  Ban, RotateCcw, Zap
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -41,6 +46,14 @@ const STATUS_OPTIONS = [
   { value: 'pending', label: '待解析' }
 ];
 
+// 文档来源类型的展示名（列表里不再直接暴露后端 type 字段值）
+const SOURCE_LABEL = {
+  file: '文件上传',
+  url: '网页链接',
+  manual: '手动创建',
+  faq: 'FAQ'
+};
+
 function KBDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -61,10 +74,12 @@ function KBDetail() {
   const [batchMode, setBatchMode] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [tags, setTags] = useState([]);
-  const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [listError, setListError] = useState(null);
+  const [batchParsing, setBatchParsing] = useState(false);
+  const [batchStopping, setBatchStopping] = useState(false);
+  const [notice, setNotice] = useState(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState(null);
@@ -115,6 +130,53 @@ function KBDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, activeTab, docParams.keyword, docParams.tag_ids, docParams.source, docParams.parse_status, docParams.start_time, docParams.end_time, docParams.page_size]);
 
+  // 静默刷新：供解析轮询使用。
+  // 拉取「与当前已展示条数等量」的第一页整体替换，既保留无限滚动已加载的条数，
+  // 也不出现 loading 闪烁或滚动位置跳动；失败静默（保留旧数据，下一轮重试）。
+  const silentRefresh = useCallback(async () => {
+    try {
+      const size = Math.min(100, Math.max(docParams.page_size, docs.length || docParams.page_size));
+      const res = await Knowledge.list(id, { ...docParams, page: 1, page_size: size });
+      const items = Array.isArray(res?.data) ? res.data : res?.data?.items || res?.data?.list || res?.data?.pages || [];
+      setDocs(items);
+      setDocsTotal(res?.total || res?.data?.total || 0);
+      return items;
+    } catch {
+      return null;
+    }
+  }, [id, docParams, docs.length]);
+
+  // 上传成功后本地插入该文档：列表立即出现并带出 parse_status，轮询随即接管，
+  // 避免每上传一个文件就做一次全量刷新（批量上传时可省掉十几次请求）。
+  const handleUploaded = useCallback((knowledge) => {
+    if (!knowledge?.id) return;
+    setDocs((prev) => (prev.some((d) => d.id === knowledge.id) ? prev : [knowledge, ...prev]));
+    setDocsTotal((t) => t + 1);
+  }, []);
+
+  const {
+    tasks: uploadTasks,
+    enqueue: enqueueUploads,
+    cancel: cancelUpload,
+    retry: retryUpload,
+    remove: removeUpload,
+    clearFinished: clearFinishedUploads,
+    summary: uploadSummary
+  } = useUploadQueue({ kbId: id, onUploaded: handleUploaded });
+
+  const parseStatusOf = useCallback(
+    (knowledgeId) => docs.find((d) => d.id === knowledgeId)?.parse_status || null,
+    [docs]
+  );
+
+  // 自动轮询：有 pending/processing/finalizing 文档时每 4s 刷新，
+  // 全部停滞超 20 分钟降频到 15s，页面切后台暂停。
+  const { polling, stalled } = useParsePolling({
+    items: docs,
+    onPoll: silentRefresh,
+    enabled: activeTab === 'docs' && !isFaq
+  });
+
   // Load more
   const loadMore = useCallback(() => {
     if (loadingMore || !hasMore) return;
@@ -149,20 +211,14 @@ function KBDetail() {
     setSelectedDocs(new Set());
   };
 
-  const handleFileChange = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setUploading(true);
+  // 支持多选：文件进入上传队列（串行上传，带真实进度，可取消/重试）。
+  // 这里不再 await —— 队列在后台推进，用户可以继续操作列表、离开再回来。
+  const handleFileChange = (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = ''; // 先清空，允许再次选择同一个文件
+    if (files.length === 0) return;
     setUploadError(null);
-    try {
-      await Knowledge.file(id, file);
-      await handleRefresh();
-    } catch (err) {
-      setUploadError(err.message || '上传失败');
-    } finally {
-      setUploading(false);
-      e.target.value = '';
-    }
+    enqueueUploads(files);
   };
 
   const handleHybridSearch = async (e) => {
@@ -193,9 +249,21 @@ function KBDetail() {
     if (selectedDocs.size === 0) return;
     if (!window.confirm(`确定删除选中的 ${selectedDocs.size} 个文档？`)) return;
     setBatchDeleting(true);
+    const ids = Array.from(selectedDocs);
     try {
-      await Knowledge.batchRemove?.(id, Array.from(selectedDocs)) ||
-        Promise.all(Array.from(selectedDocs).map((docId) => Knowledge.remove(docId)));
+      try {
+        await Knowledge.batchRemove(id, ids);
+      } catch (err) {
+        // 老版本后端没有批量接口（404/405）时退化为逐条删除；
+        // 其他错误（如 403 权限、409 冲突）不兜底，避免把真实原因掩盖成 N 次同样失败
+        const msg = err?.message || '';
+        const noBatchApi = /HTTP\s*(404|405)/.test(msg) || /not found|method not allowed/i.test(msg);
+        if (!noBatchApi) throw err;
+        const results = await Promise.allSettled(ids.map((docId) => Knowledge.remove(docId)));
+        const failed = results.filter((r) => r.status === 'rejected').length;
+        if (failed === ids.length) throw err;
+        if (failed > 0) setNotice(`已删除 ${ids.length - failed} 个，${failed} 个删除失败`);
+      }
       setSelectedDocs(new Set());
       setBatchMode(false);
       await handleRefresh();
@@ -203,6 +271,76 @@ function KBDetail() {
       alert(err.message || '批量删除失败');
     } finally {
       setBatchDeleting(false);
+    }
+  };
+
+  // 批量「开始解析」：后端 /knowledge/batch-reparse 是异步任务队列（asynq），
+  // 提交后立即返回，真正的进度靠解析状态轮询体现。
+  const handleBatchReparse = async () => {
+    if (selectedDocs.size === 0) return;
+    setBatchParsing(true);
+    setNotice(null);
+    const ids = Array.from(selectedDocs);
+    try {
+      await Knowledge.batchReparse(id, ids);
+      // 乐观更新为 pending，避免用户以为没反应；随后轮询会校正为真实状态
+      setDocs((prev) => prev.map((d) => (ids.includes(d.id) ? { ...d, parse_status: 'pending' } : d)));
+      setNotice(`已提交 ${ids.length} 个文档的重新解析任务`);
+      setSelectedDocs(new Set());
+      setBatchMode(false);
+      silentRefresh();
+    } catch (err) {
+      alert(err.message || '批量重新解析失败');
+    } finally {
+      setBatchParsing(false);
+    }
+  };
+
+  // 批量「停止解析」：后端没有批量取消接口，逐条调用 cancel-parse。
+  // 用 allSettled 保证个别失败不影响其余；只对 in-flight 的文档发请求。
+  const handleBatchCancelParse = async () => {
+    const targets = docs
+      .filter((d) => selectedDocs.has(d.id) && isInFlight(d.parse_status))
+      .map((d) => d.id);
+    if (targets.length === 0) {
+      alert('选中的文档中没有正在解析的任务（仅 pending / 解析中 / 收尾中 可停止）');
+      return;
+    }
+    if (!window.confirm(`停止选中的 ${targets.length} 个解析任务？已生成的分块与索引会保留，可随时重新解析。`)) return;
+    setBatchStopping(true);
+    setNotice(null);
+    try {
+      const results = await Promise.allSettled(targets.map((docId) => Knowledge.cancelParse(docId)));
+      const ok = results.filter((r) => r.status === 'fulfilled').length;
+      const failed = targets.length - ok;
+      setDocs((prev) => prev.map((d) => (targets.includes(d.id) ? { ...d, parse_status: 'cancelled' } : d)));
+      setNotice(`已停止 ${ok} 个解析任务${failed ? `，${failed} 个失败` : ''}`);
+      setSelectedDocs(new Set());
+      setBatchMode(false);
+      silentRefresh();
+    } catch (err) {
+      alert(err.message || '停止解析失败');
+    } finally {
+      setBatchStopping(false);
+    }
+  };
+
+  // 单文档快捷操作（列表行内）
+  const handleStopDoc = async (doc) => {
+    try {
+      await Knowledge.cancelParse(doc.id);
+      setDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, parse_status: 'cancelled' } : d)));
+    } catch (err) {
+      alert(err.message || '停止解析失败');
+    }
+  };
+
+  const handleReparseDoc = async (doc) => {
+    try {
+      await Knowledge.reparse(doc.id);
+      setDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, parse_status: 'pending' } : d)));
+    } catch (err) {
+      alert(err.message || '重新解析失败');
     }
   };
 
@@ -229,6 +367,11 @@ function KBDetail() {
   };
 
   const error = kbError || (activeTab === 'docs' && listError);
+
+  // 选中项里可被「停止解析」的数量（只有 in-flight 状态能被取消）
+  const stoppableCount = batchMode
+    ? docs.filter((d) => selectedDocs.has(d.id) && isInFlight(d.parse_status)).length
+    : 0;
 
   return (
     <div className="p-4">
@@ -317,10 +460,13 @@ function KBDetail() {
                   <button
                     onClick={handleRefresh}
                     disabled={refreshing}
-                    className="shrink-0 rounded-xl bg-white p-2 text-gray-600 shadow-sm disabled:opacity-50"
-                    title="刷新"
+                    className={clsx(
+                      'relative shrink-0 rounded-xl p-2 shadow-sm disabled:opacity-50',
+                      polling ? 'bg-blue-50 text-blue-600' : 'bg-white text-gray-600'
+                    )}
+                    title={polling ? '正在自动刷新解析进度（点击立即刷新）' : '刷新'}
                   >
-                    <RefreshCw className={clsx('h-5 w-5', refreshing && 'animate-spin')} />
+                    <RefreshCw className={clsx('h-5 w-5', (refreshing || polling) && 'animate-spin')} />
                   </button>
                 </div>
                 <div className="flex gap-2">
@@ -328,12 +474,17 @@ function KBDetail() {
                     <button
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
-                      disabled={uploading}
-                      className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-gradient-to-br from-brand-600 to-brand-400 px-3 py-2.5 text-sm font-medium text-white shadow-brand-lg hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
+                      className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-gradient-to-br from-brand-600 to-brand-400 px-3 py-2.5 text-sm font-medium text-white shadow-brand-lg hover:opacity-90 active:scale-[0.98]"
                     >
                       <Upload className="h-4 w-4" />
-                      {uploading ? '上传中…' : '上传文件'}
-                      <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileChange} />
+                      {uploadSummary.busy ? `上传中 ${uploadSummary.uploading + uploadSummary.queued}` : '上传文件'}
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        className="hidden"
+                        onChange={handleFileChange}
+                      />
                     </button>
                   )}
                   <button
@@ -348,6 +499,25 @@ function KBDetail() {
               {uploadError && (
                 <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{uploadError}</div>
               )}
+
+              {notice && (
+                <div className="flex items-start gap-2 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-700">
+                  <span className="flex-1">{notice}</span>
+                  <button type="button" onClick={() => setNotice(null)} className="shrink-0 text-emerald-600">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
+
+              <UploadTaskPanel
+                tasks={uploadTasks}
+                summary={uploadSummary}
+                parseStatusOf={parseStatusOf}
+                onCancel={cancelUpload}
+                onRetry={retryUpload}
+                onRemove={removeUpload}
+                onClearFinished={clearFinishedUploads}
+              />
 
               {showFilters && (
                 <div className="rounded-2xl bg-white p-3 shadow-sm space-y-2">
@@ -406,6 +576,9 @@ function KBDetail() {
               <div className="flex items-center justify-between">
                 <p className="text-xs text-gray-500">
                   共 {docsTotal} 条，已加载 {docs.length} 条
+                  {polling && (
+                    <span className="ml-1.5 text-blue-600">{stalled ? '· 后台解析中（已降频）' : '· 解析进度自动刷新中'}</span>
+                  )}
                 </p>
                 <button
                   onClick={() => {
@@ -419,48 +592,104 @@ function KBDetail() {
               </div>
 
               {batchMode && selectedDocs.size > 0 && (
-                <div className="flex items-center justify-between rounded-xl bg-blue-50 p-2">
-                  <span className="text-xs text-blue-700">已选 {selectedDocs.size} 项</span>
-                  <button
-                    onClick={handleBatchDelete}
-                    disabled={batchDeleting}
-                    className="rounded-lg bg-red-600 px-2 py-1 text-xs text-white disabled:opacity-50"
-                  >
-                    {batchDeleting ? '删除中' : '删除'}
-                  </button>
+                <div className="space-y-2 rounded-xl bg-blue-50 p-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-blue-700">
+                      已选 {selectedDocs.size} 项
+                      {stoppableCount > 0 && ` · ${stoppableCount} 项解析中`}
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleBatchReparse}
+                      disabled={batchParsing || batchDeleting || batchStopping}
+                      className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-brand-600 px-2 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                    >
+                      {batchParsing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                      重新解析
+                    </button>
+                    <button
+                      onClick={handleBatchCancelParse}
+                      disabled={batchParsing || batchDeleting || batchStopping || stoppableCount === 0}
+                      className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-amber-500 px-2 py-1.5 text-xs font-medium text-white disabled:opacity-40"
+                    >
+                      {batchStopping ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Ban className="h-3.5 w-3.5" />}
+                      停止解析
+                    </button>
+                    <button
+                      onClick={handleBatchDelete}
+                      disabled={batchParsing || batchDeleting || batchStopping}
+                      className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-red-600 px-2 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                    >
+                      {batchDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                      删除
+                    </button>
+                  </div>
                 </div>
               )}
 
               <div className="space-y-2">
-                {docs.map((doc, idx) => (
-                  <div
-                    key={doc.id}
-                    onClick={() => batchMode ? toggleDocSelection(doc.id) : navigate(`/knowledge/${doc.id}`)}
-                    className={clsx(
-                      'flex items-center gap-3 rounded-2xl bg-white p-3 shadow-sm active:scale-95',
-                      selectedDocs.has(doc.id) && 'bg-blue-50 ring-1 ring-blue-300'
-                    )}
-                  >
-                    {batchMode && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); toggleDocSelection(doc.id); }}
-                        className="text-blue-600"
-                      >
-                        {selectedDocs.has(doc.id) ? <CheckSquare className="h-5 w-5" /> : <Square className="h-5 w-5" />}
-                      </button>
-                    )}
-                    <div className="rounded-xl bg-gray-100 p-2 text-gray-600">
-                      {doc.type === 'url' ? <Link className="h-5 w-5" /> : doc.type === 'manual' ? <PenLine className="h-5 w-5" /> : <File className="h-5 w-5" />}
+                {docs.map((doc) => {
+                  const inFlight = isInFlight(doc.parse_status);
+                  const meta = statusMeta(doc.parse_status);
+                  return (
+                    <div
+                      key={doc.id}
+                      onClick={() => batchMode ? toggleDocSelection(doc.id) : navigate(`/knowledge/${doc.id}`)}
+                      className={clsx(
+                        'flex items-center gap-3 rounded-2xl bg-white p-3 shadow-sm active:scale-95',
+                        selectedDocs.has(doc.id) && 'bg-blue-50 ring-1 ring-blue-300'
+                      )}
+                    >
+                      {batchMode && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); toggleDocSelection(doc.id); }}
+                          className="text-blue-600"
+                        >
+                          {selectedDocs.has(doc.id) ? <CheckSquare className="h-5 w-5" /> : <Square className="h-5 w-5" />}
+                        </button>
+                      )}
+                      <div className="rounded-xl bg-gray-100 p-2 text-gray-600">
+                        {doc.type === 'url' ? <Link className="h-5 w-5" /> : doc.type === 'manual' ? <PenLine className="h-5 w-5" /> : <File className="h-5 w-5" />}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h4 className="truncate text-sm font-semibold text-gray-900">{doc.title || doc.file_name}</h4>
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-gray-500">
+                          <span className={clsx('inline-flex items-center gap-1 rounded-lg px-1.5 py-0.5 font-medium', meta.chip)}>
+                            {inFlight && <Loader2 className="h-3 w-3 animate-spin" />}
+                            {meta.label}
+                          </span>
+                          <span>{SOURCE_LABEL[doc.type] || doc.type}</span>
+                          {doc.file_size ? <span>{formatBytes(doc.file_size)}</span> : null}
+                          {doc.parse_status === 'finalizing' && doc.pending_subtasks_count > 0 && (
+                            <span>子任务剩余 {doc.pending_subtasks_count}</span>
+                          )}
+                        </div>
+                      </div>
+                      {/* 行内快捷操作：解析中可停止，失败/已取消可重新解析。
+                          放在行右侧且 stopPropagation，避免误触进入详情页 */}
+                      {!batchMode && inFlight && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleStopDoc(doc); }}
+                          className="shrink-0 rounded-lg bg-amber-50 p-1.5 text-amber-600 active:scale-90"
+                          title="停止解析"
+                        >
+                          <Ban className="h-4 w-4" />
+                        </button>
+                      )}
+                      {!batchMode && (doc.parse_status === 'failed' || doc.parse_status === 'cancelled') && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleReparseDoc(doc); }}
+                          className="shrink-0 rounded-lg bg-brand-50 p-1.5 text-brand-600 active:scale-90"
+                          title="重新解析"
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                        </button>
+                      )}
+                      <ChevronRight className="h-5 w-5 shrink-0 text-gray-400" />
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <h4 className="truncate text-sm font-semibold text-gray-900">{doc.title || doc.file_name}</h4>
-                      <p className="text-xs text-gray-500">
-                        {doc.type} · {doc.parse_status} · {doc.file_size ? `${(doc.file_size / 1024).toFixed(1)} KB` : ''}
-                      </p>
-                    </div>
-                    <ChevronRight className="h-5 w-5 text-gray-400" />
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               {loadingMore && (

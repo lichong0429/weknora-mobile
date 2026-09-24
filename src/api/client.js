@@ -238,6 +238,93 @@ export async function uploadFile(kbId, file, extra = {}) {
   return request('POST', `/knowledge-bases/${kbId}/knowledge/file`, form);
 }
 
+// 带真实上传进度的文件上传。
+// fetch 无法获知请求体上传进度（只有响应流），因此这里用 XHR：
+//   - onProgress(loaded, total) 供上传队列展示真实百分比
+//   - signal(AbortSignal) 支持「取消上传」
+// 返回后端创建的 knowledge 对象（含 id / parse_status），调用方据此接管解析状态轮询。
+export function uploadFileWithProgress(kbId, file, { fileName, tagId, channel, onProgress, signal } = {}) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const form = new FormData();
+    form.append('file', file);
+    if (fileName) form.append('fileName', fileName);
+    if (tagId) form.append('tag_id', tagId);
+    if (channel) form.append('channel', channel);
+
+    const url = buildUrl(`/knowledge-bases/${kbId}/knowledge/file`);
+    const xhr = new XMLHttpRequest();
+    const reqEntry = logRequest({ method: 'POST', url, headers: { 'X-API-Key': '***' }, body: '[FormData]' });
+
+    let aborted = false;
+    const onAbort = () => {
+      aborted = true;
+      try { xhr.abort(); } catch {}
+    };
+    signal?.addEventListener('abort', onAbort);
+
+    const cleanup = () => signal?.removeEventListener('abort', onAbort);
+
+    xhr.open('POST', url, true);
+    xhr.setRequestHeader('Accept', 'application/json');
+    xhr.setRequestHeader('X-API-Key', getApiKey());
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded, e.total);
+    };
+
+    xhr.onload = () => {
+      cleanup();
+      const contentType = xhr.getResponseHeader('content-type') || '';
+      const text = xhr.responseText || '';
+      logResponse({ id: reqEntry.id, status: xhr.status, statusText: xhr.statusText, body: text.slice(0, 2000) });
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        if (contentType.includes('text/html')) {
+          reject(new Error('后端返回了 HTML 页面，而不是 JSON。请检查设置里的 WeKnora 地址。'));
+          return;
+        }
+        if (!text) { resolve(null); return; }
+        try {
+          resolve(JSON.parse(text));
+        } catch {
+          reject(new Error(`后端返回了非 JSON 内容：${text.slice(0, 200)}`));
+        }
+        return;
+      }
+
+      let msg = `HTTP ${xhr.status}`;
+      try {
+        const body = JSON.parse(text);
+        msg = body.error?.message || body.message || msg;
+      } catch {}
+      reject(new Error(msg));
+    };
+
+    xhr.onerror = () => {
+      cleanup();
+      logResponse({ id: reqEntry.id, status: 0, statusText: 'error', error: 'network error' });
+      reject(new Error('网络错误：无法连接后端，请检查地址与网络。'));
+    };
+
+    xhr.ontimeout = () => {
+      cleanup();
+      reject(new Error('上传超时，请重试。'));
+    };
+
+    xhr.onabort = () => {
+      cleanup();
+      logResponse({ id: reqEntry.id, status: 0, statusText: 'aborted' });
+      reject(aborted ? new DOMException('Aborted', 'AbortError') : new Error('上传已取消'));
+    };
+
+    xhr.send(form);
+  });
+}
+
 // SSE streaming for chat endpoints
 async function* sseParser(reader) {
   const decoder = new TextDecoder();
