@@ -104,8 +104,84 @@ export function formatElapsed(fromIso, now = Date.now()) {
 }
 
 export function formatBytes(bytes) {
-  if (!bytes && bytes !== 0) return '';
+  if (!bytes || bytes < 0) return '';
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
+
+// ---------------------------------------------------------------------------
+// 解析阶段追踪（GET /knowledge/{id}/stages）
+//
+// 后端把一次解析拆成 5 个阶段（types.AllStages），每个阶段是一个 span，
+// 失败时通过 DAG 依赖把下游阶段级联标记为 cancelled，因此时间线能直接
+// 显示「炸伤范围」。这里只做展示层的语义映射。
+// ---------------------------------------------------------------------------
+
+// 顺序与后端 types.AllStages 一致，不要随意调整
+export const STAGE_ORDER = ['docreader', 'chunking', 'embedding', 'multimodal', 'postprocess'];
+
+const STAGE_LABEL = {
+  docreader: '文档解析',
+  chunking: '分块',
+  embedding: '向量化',
+  multimodal: '多模态',
+  postprocess: '后处理',
+  knowledge_processing: '整体处理'
+};
+
+export function stageLabel(name) {
+  return STAGE_LABEL[name] || name || '未知阶段';
+}
+
+// span 状态（后端 types.SpanStatus*）
+const SPAN_META = {
+  pending: { label: '等待', chip: 'bg-gray-100 text-gray-600' },
+  running: { label: '进行中', chip: 'bg-blue-50 text-blue-700' },
+  done: { label: '完成', chip: 'bg-emerald-50 text-emerald-700' },
+  failed: { label: '失败', chip: 'bg-red-50 text-red-700' },
+  skipped: { label: '跳过', chip: 'bg-gray-100 text-gray-500' },
+  cancelled: { label: '已取消', chip: 'bg-amber-50 text-amber-700' }
+};
+
+export function spanMeta(status) {
+  return SPAN_META[status] || { label: status || '未知', chip: 'bg-gray-100 text-gray-500' };
+}
+
+// trace 是单棵树的根节点（SpanTreeNode 内嵌 span 字段 + children）。
+// 取出 5 个阶段节点并按固定顺序排列；后端在无 tracing 数据时会合成
+// 5 个 pending 占位阶段，因此这里对缺失阶段也补占位，保证时间线始终完整。
+export function extractStages(trace) {
+  const found = new Map();
+  const walk = (node) => {
+    if (!node || typeof node !== 'object') return;
+    if (node.kind === 'stage' && node.name) found.set(node.name, node);
+    (node.children || []).forEach(walk);
+  };
+  if (Array.isArray(trace)) trace.forEach(walk);
+  else walk(trace);
+
+  return STAGE_ORDER.map((name) => found.get(name) || {
+    name,
+    kind: 'stage',
+    status: 'pending',
+    _placeholder: true
+  });
+}
+
+// 该条解析记录是否包含真实 trace（而非后端合成的占位时间线）
+export function hasRealTrace(payload) {
+  if (!payload?.trace) return false;
+  return Boolean(payload.trace.span_id || (payload.current_attempt ?? 0) > 0);
+}
+
+export function formatDuration(ms) {
+  if (!ms && ms !== 0) return '';
+  if (ms < 1000) return `${ms}ms`;
+  const sec = ms / 1000;
+  if (sec < 60) return `${sec.toFixed(sec < 10 ? 1 : 0)}s`;
+  const min = Math.floor(sec / 60);
+  return `${min}m${Math.round(sec % 60)}s`;
+}
+

@@ -1,103 +1,86 @@
 <!-- 发版前请将本文件内容替换为「当版」说明；若留空或删除本文件，CI 会自动回退为 Full Changelog 链接。 -->
 
-# WeKnora Mobile v1.6.0
+# WeKnora Mobile v1.7.0
 
 发布日期：2026-09-24
 
-**P0 功能补齐**：把网页端的「上传/解析过程控制」搬到手机端 —— 上传任务队列（真实进度、取消、重试）、解析进度自动轮询、批量开始/停止解析。同时修正了一个会让批量删除**永远失败**的字段名错误。
+**P1 功能补齐**：批量下载（首次让 App 内下载真正可用）、解析失败原因可见、解析阶段时间线。附带修复一个「下载按钮按了没反应」的历史缺陷。
 
 ---
 
-## 一、上传任务队列（网页端已有的能力）
+## 一、批量下载：先修基础设施，再做功能
 
-### 之前的问题
+### 原来为什么下不了
 
-上传走的是「选文件 → `await` 上传 → 全量刷新列表」的单发模式：
+网页端与 App 内的下载体验完全不同，根因在 Android WebView 的能力边界：
 
-- **没有进度**，大文件上传时界面只有一个「上传中…」，无法判断是卡住还是在跑
-- **不能多选**，一次只能选一个文件
-- **不能取消、不能重试**，传错或者网络抖动只能重来
-- 上传期间按钮禁用，想继续浏览列表都不方便
-
-### 现在的行为
-
-- 文件选择支持**多选**，选中后进入队列面板
-- **串行上传**（并发 1）：手机网络下并发上传会互相抢带宽，进度条会集体卡在中段，反而像卡死；串行保证任意时刻只有一个可中断的传输
-- 每个任务展示**真实上传百分比**（来自 XHR 的 `upload.onprogress`，不是估算）
-- 每个任务可**取消**（中断传输）、失败可**重试**（复用同一个 File 对象）、可**从列表移除**
-- 底部「清除已完成」一键清理
-
-> 为什么序列号是串行而不是并发 3：WebView 单域名连接数有限，并发上传会和文档列表、图片代理请求互相排队，整体更慢。
-
-### 已验证的取舍
-
-**上传中离开页面不会中断上传。** 上传是用户显式发起的写操作，中断会直接丢掉这次上传且没有任何补偿，因此刻意不在组件卸载时 `abort()`。代价是离开页面后看不到进度、也无法取消，但文件会正常入库，回到列表即可看到。
-
-> 附带修掉一个隐患：早期实现若在卸载时中断，会与 React StrictMode 的「挂载→卸载→再挂载」检查冲突，导致开发环境下刚发起的上传立即失败；同时在真机上表现为「上传中一点开文档就取消上传」。现已改为后台继续 + 同步去重守卫（同一任务不会被推进两次）。
-
----
-
-## 二、解析进度自动轮询
-
-### 之前的问题
-
-文档列表的 `parse_status` 只在手动点刷新时更新。上传完一批文件后，用户只能反复点刷新按钮猜「解析好了没有」。
-
-### 现在的行为
-
-- 列表中存在 `pending` / `processing` / `finalizing` 状态的文档时，**每 4 秒静默刷新一次**，全部落到终态后**立即停止**（不空转请求）
-- 刷新按钮会出现旋转态并显示「解析进度自动刷新中」，让用户知道数据是活的
-- **停滞降频**：全部在解析中的文档超过 20 分钟没有推进（依据 `last_activity_at`），轮询降频到 15 秒，减少对后端的无效压力，并提示「后台解析中（已降频）」
-- **切后台暂停**：页面不可见时跳过轮询，回到前台立即补一次刷新（手机省电与避免连接被系统回收）
-- 静默刷新按「当前已加载条数」拉取等量数据整体替换，不打断无限滚动的滚动位置、也不出现 loading 闪烁
-
-### 关于「解析进度百分比」
-
-**故意没有做进度条。** 后端 `knowledge` 对象只下发 `parse_status`，没有解析百分比字段（`pending_subtasks_count` 只在 `finalizing` 阶段有意义）。伪造一个动的进度条属于欺骗性 UI，因此解析态用不定量 spinner + 状态文案（`解析中` / `收尾中`），只有**上传**阶段给真实百分比。
-
----
-
-## 三、批量开始 / 停止解析
-
-批量模式下，操作条从「只有删除」扩展为三个动作：
-
-| 动作 | 底层接口 | 说明 |
+| 方案 | 浏览器 / PWA | Android WebView |
 |---|---|---|
-| 重新解析 | `POST /knowledge/batch-reparse` `{kb_id, ids}` | 后端异步任务队列（asynq），提交即返回，进度由轮询体现 |
-| 停止解析 | 逐条 `POST /knowledge/{id}/cancel-parse` | 后端**没有**批量取消接口，用 `Promise.allSettled` 并发逐条调用，个别失败不影响其余，并汇总「成功 N / 失败 M」 |
-| 删除 | `POST /knowledge/batch-delete` `{kb_id, ids}` | 修正字段名（见下） |
+| `<a href="blob:..." download>` | 可用 | **无效**（WebView 忽略 `download` 属性，blob 下载不实现） |
+| `navigator.share({ files })` | 可用 | **不支持**（WebView 未实现 Web Share API） |
+| 打开 URL 交给系统浏览器 | 可用 | 不可用（需要 `X-API-Key` 请求头 + POST body，浏览器给不了） |
 
-- 「停止解析」按钮只对**选中项中的 in-flight 文档**可用，并显示可停止数量，避免点下去无反应
-- 停止前明确告知：已生成的分块与索引会保留，可随时重新解析
-- 列表**行内快捷操作**：解析中的文档右侧直接给「停止」，失败/已取消的给「重新解析」，无需进详情页
-- 文档状态由英文原值（`processing`）改为中文标签 + 配色（解析中 / 收尾中 / 已完成 / 失败 / 已取消 / 待解析）
+也就是说 App 里原来的「下载文件」按钮**从来就点不动**（它是 `<a download>`），这不是修 bug 能解决的，必须有原生通路。
+
+### 现在的实现
+
+新增原生下载桥 `WeKnoraBridge.download(method, url, body, fileName, apiKey, requestId)`：
+
+1. 前端把**绝对 URL + API Key + 请求体**交给原生（原生读不到 localStorage，因此由前端解析后传入）
+2. 原生用 `HttpURLConnection` 直接发请求，**流式写入**磁盘，不经内存 —— 后端批量下载上限是 200 个文件 / 512 MiB，走「blob 转 base64 过桥」会直接撑爆 WebView 内存
+3. 落盘位置：Android 10+ 写入 **`下载/WeKnora/`**（MediaStore，无需任何存储权限）；Android 9 及以下写入应用专属下载目录（同样免权限）
+4. 完成/失败通过 `evaluateJavascript` 回调 `window.__weknoraDownload(requestId, ok, message)`，前端弹提示
+5. 失败时不生成残缺文件：**先确认 HTTP 200 再创建目标文件**，并回滚已创建的 MediaStore 条目；错误消息优先取后端 JSON 的 `error.message`（如 403 权限不足）
+6. 文件名消毒（剥离路径分隔符与控制字符）+ 优先采用服务端 `Content-Disposition`（含 RFC 5987 的 `filename*`），避免中文名乱码
+
+非原生环境（PWA / 桌面浏览器）自动回退到 `fetch → blob → a[download]`，两条路径由同一个 `saveFile()` 入口分流。
+
+### 批量下载入口
+
+知识库文档列表 → 批量 → 选中 → **下载 ZIP**。前端按后端约束做了前置拦截：
+
+- 超过 200 个文件直接拦下并提示分批（后端 `max=200`，否则传到一半才被 400 拒绝）
+- 合计超过 300 MB 先弹确认（后端上限 512 MiB，弱网下大包体验差）
+- 文件名形如 `知识库名_12份_2026-09-24.zip`
+
+> 已知行为：后端对**无原文件的条目会自动跳过**（如纯手动创建的条目），ZIP 内条目数可能少于所选数量，这是服务端既有语义，不做前端伪造。
 
 ---
 
-## 四、修复：批量删除从未生效
+## 二、解析失败原因可见
 
-`src/api/endpoints.js` 中批量删除发的是 camelCase：
+### 之前
 
-```js
-batchRemove: (kbId, ids) => post('/knowledge/batch-delete', { kbId, ids })   // ← 错误
-```
+文档解析失败后，列表与详情页都只显示一个英文 `failed`。用户无法区分是文件损坏、格式不支持、体积超限，还是后端模型/队列异常 —— 只能反复点「重新解析」碰运气。
 
-而后端 `BatchDeleteKnowledgeRequest` 的字段是 snake_case，且为必填：
+### 现在
 
-```go
-type BatchDeleteKnowledgeRequest struct {
-    KBID string   `json:"kb_id" binding:"required"`
-    IDs  []string `json:"ids"  binding:"required"`
-}
-```
+`knowledge.error_message` 与 `/stages` 的 `last_error` 都会被展示：
 
-`kb_id` 缺失会直接命中 binding 校验，返回 400 `Invalid request parameters`。也就是说**这个功能此前从未成功过**。
+- **列表行内**：失败条目直接显示失败原因（最多 2 行，超出省略）
+- **详情页**：红色告警块显示「解析失败（阶段：分块）· ERROR_CODE」+ 完整原因文本
+- 详情页同时提供**停止解析 / 重新解析 / 下载原文件**三个动作，与列表页的批量操作对应
 
-附带的第二个问题：调用处写的是 `await batchRemove(...) || Promise.all(逐条删除)` —— `||` 作用于 Promise 对象永远为真，兜底分支是死代码。
+---
 
-现在：字段名修正为 `kb_id`；兜底逻辑改为**仅在**批量接口不存在（HTTP 404/405）时退化为逐条删除，其他错误（403 权限、409 冲突）原样抛出，不再把真实原因掩盖成 N 次同样的失败。
+## 三、解析阶段时间线（解析诊断）
 
-> 该缺陷与「批量重新解析」是同一个根因类别（请求体字段命名），因此新增接口时统一按后端 Go struct 的 `json` tag 命名，不再凭前端习惯写 camelCase。
+调用 `GET /knowledge/{id}/stages`，把一次解析拆成 5 个阶段展示：
+
+| 阶段 | 含义 |
+|---|---|
+| 文档解析 `docreader` | 原文件内容抽取 |
+| 分块 `chunking` | 切分为可检索片段 |
+| 向量化 `embedding` | 生成向量并写入索引 |
+| 多模态 `multimodal` | 图片等多媒体处理（纯文本文档会标记为「跳过」） |
+| 后处理 `postprocess` | 摘要 / 问题生成 / 图谱抽取等增强 |
+
+设计要点：
+
+- **炸伤范围可见**：后端按 DAG 依赖把失败阶段的下游标记为 `cancelled`，因此一眼能看出「分块失败 → 向量化/多模态/后处理全部取消」，而不是三个转圈的不确定状态
+- **阶段状态语义**：等待 / 进行中 / 完成 / 失败 / 跳过 / 已取消，各自独立配色
+- **不做假数据的诚实处理**：后端对启用追踪之前解析的旧文档会返回 5 个 pending 占位阶段。此时界面会明确标注「该条目没有阶段级追踪数据，上面的阶段状态取自文档当前状态，仅供参考」，而不是把占位符伪装成真实进度
+- 展开后可看：第几次尝试（attempt / latest_attempt）、最后活动时间、队列状态（排队积压 / 疑似卡住）、最后一次错误
 
 ---
 
@@ -105,26 +88,28 @@ type BatchDeleteKnowledgeRequest struct {
 
 **新增**
 
-- `src/hooks/useUploadQueue.js` — 串行上传队列（取消/重试/去重守卫/后台续传）
-- `src/hooks/useParsePolling.js` — 解析进度轮询（停滞降频、切后台暂停）
-- `src/components/UploadTaskPanel.jsx` — 上传任务面板
-- `src/utils/parseStatus.js` — 解析状态语义、在飞行判定、停滞判定、格式化
+- `src/utils/nativeDownload.js` — 下载入口：原生桥优先，浏览器回退；含回调注册与 10 分钟超时
+- `src/utils/labels.js` — 文档来源类型的中文映射（KBDetail / KnowledgeDetail 共用，避免文案漂移）
 
 **修改**
 
-- `src/api/client.js` — 新增 `uploadFileWithProgress`（XHR 真实进度 + AbortSignal）
-- `src/api/endpoints.js` — 修正 `batchRemove` 字段名；新增 `batchReparse`
-- `src/components/KBDetail.jsx` — 多选上传、批量启停解析、行内快捷操作、状态本地化、接入轮询
-- `webview-app/app/build.gradle` / `package.json` — 版本 1.6.0
+- `webview-app/.../MainActivity.java` — 新增原生下载桥（流式写盘 + MediaStore + 错误提取 + JS 回调 + 文件名消毒）
+- `src/api/client.js` — 新增 `buildApiUrl`、`downloadAsBlob`、`parseContentDispositionName`
+- `src/api/endpoints.js` — 新增 `stages`、`downloadPath`、`batchDownloadPath`
+- `src/utils/parseStatus.js` — 新增阶段语义（`STAGE_ORDER` / `extractStages` / `hasRealTrace` / `stageLabel` / `spanMeta` / `formatDuration`）；`formatBytes` 补齐 GB 档
+- `src/components/KnowledgeDetail.jsx` — 解析诊断卡片、失败原因、启停/下载动作；`<a download>` 改为原生下载
+- `src/components/KBDetail.jsx` — 批量下载（2×2 操作网格）、行内失败原因
+- `package.json` / `webview-app/app/build.gradle` — 版本 1.7.0
 
 ## 验证
 
 - webview 构建 + PWA 构建均通过
-- 产物级校验：`batch-reparse` / `kb_id` / 状态文案 / `visibilitychange` / `Aborted` 均已进入 bundle
-- hook 顺序静态检查通过（`KnowledgeDetail`/`KBDetail` 无隐患；`VectorStoreList` 为已记录误报）
-- `parseStatus` 逻辑单测 11 项通过（在飞行判定、签名生成、停滞判定、状态中文化、格式化）
-- 后端契约以官方 Go 源码为准核对（`internal/types/knowledge.go` 状态常量、`internal/handler/knowledge.go` 请求 schema、`internal/router/routes_knowledge.go` 路由）
+- 产物级校验：`batch-download` / `解析诊断` / `文档解析` / `下载 ZIP` / `__weknoraDownloadPending` / `WeKnoraBridge` 均已进入 bundle
+- 阶段与状态工具函数单测 17 项通过（阶段顺序与后端常量一致、失败下游级联 cancelled、占位回退、真实 trace 判定、中文标签、格式化）
+- Java 侧结构校验：花括号平衡、桥方法签名与 JS 调用签名一致（原生层由 CI 编译验证）
+- 后端契约以官方 Go 源码为准核对：`BatchDownloadKnowledgeRequest{ ids }`（max 200 / 512 MiB）、`Knowledge.ErrorMessage`、`GET /knowledge/{id}/stages` 响应结构、`types.AllStages` 与 `SpanStatus*` 常量
 
 ## 尚未验证
 
-**未对运行中的实例做端到端联调**：仓库与记忆中留存的 API Key 对 `100.97.171.99` 返回 401 unauthorized，无可用凭据。因此上面的接口契约来自官方源码，而非一次真实往返。若实际使用中出现失败，界面会直接显示 HTTP 状态码与后端错误消息（如 403 / 400），据此可一次定位。
+1. **未对运行中的实例做端到端联调**（同 v1.6.0）：留存 API Key 对 `100.97.171.99` 返回 401，无可用凭据。接口契约来自官方源码。
+2. **原生下载桥未经真机验证**：本机无 Android SDK，无法编译 Java，只做了结构核对。首次使用若失败，界面会显示后端返回的具体错误（如 403），Toast 会给出落盘路径或失败原因。

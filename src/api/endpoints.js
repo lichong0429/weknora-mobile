@@ -30,6 +30,12 @@ export const Knowledge = {
   reparse: (id) => post(`/knowledge/${id}/reparse`),
   cancelParse: (id) => post(`/knowledge/${id}/cancel-parse`),
   preview: (id) => getText(`/knowledge/${id}/preview`),
+  // 解析阶段追踪：返回 { trace, current_stage, last_error, attempt, ... }
+  stages: (id, attempt) => get(`/knowledge/${id}/stages`, attempt ? { attempt } : {}),
+  // 单个文档原文件下载路径（走原生桥下载，见 utils/nativeDownload.js）
+  downloadPath: (id) => `/knowledge/${id}/download`,
+  // 批量下载：POST 返回 ZIP 二进制（后端上限 200 个文件 / 512 MiB）
+  batchDownloadPath: (kbId) => `/knowledge-bases/${kbId}/knowledge/batch-download`,
   chunks: (id, kbId) =>
     kbId
       ? get(`/knowledge-bases/${kbId}/knowledge/${id}/chunks`)

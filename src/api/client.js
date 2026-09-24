@@ -221,6 +221,55 @@ export async function post(path, body = {}, signal = null) {
   return request('POST', path, body, signal);
 }
 
+// 暴露解析后的绝对地址：原生下载桥（Android）无法读 localStorage，
+// 因此由前端把完整 URL 和 API Key 传过去，原生只负责发起请求与落盘。
+export function buildApiUrl(path) {
+  return buildUrl(path);
+}
+
+// 从 Content-Disposition 解析文件名（同时支持 filename*=UTF-8'' 与普通 filename=）
+export function parseContentDispositionName(header) {
+  if (!header) return '';
+  const star = /filename\*=(?:UTF-8|utf-8)''([^;]+)/i.exec(header);
+  if (star?.[1]) {
+    try { return decodeURIComponent(star[1].replace(/^"|"$/g, '')); } catch { return star[1]; }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(header);
+  return plain?.[1] ? plain[1].trim() : '';
+}
+
+// 浏览器环境（PWA / 桌面网页）下载：fetch → blob → a[download]。
+// Android WebView 里这条路径走不通（WebView 不实现 blob 下载、a[download] 被忽略），
+// 所以原生壳内一律走 utils/nativeDownload.js 的桥；这里只作为非原生环境的回退。
+export async function downloadAsBlob(path, { method = 'GET', body = null, fileName = 'download' } = {}) {
+  const url = buildUrl(path);
+  const isJson = body && !(body instanceof FormData);
+  const res = await fetch(url, {
+    method,
+    headers: { ...getHeaders(isJson), Accept: '*/*' },
+    body: isJson ? JSON.stringify(body) : body
+  });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const j = await res.json();
+      msg = j.error?.message || j.message || msg;
+    } catch {}
+    throw new Error(msg);
+  }
+  const blob = await res.blob();
+  const name = parseContentDispositionName(res.headers.get('content-disposition')) || fileName;
+  const objUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = objUrl;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(objUrl), 60000);
+  return { fileName: name, size: blob.size };
+}
+
 export async function put(path, body = {}) {
   return request('PUT', path, body);
 }

@@ -13,12 +13,14 @@ import UploadTaskPanel from './UploadTaskPanel.jsx';
 import { useUploadQueue } from '../hooks/useUploadQueue.js';
 import { useParsePolling } from '../hooks/useParsePolling.js';
 import { isInFlight, statusMeta, formatBytes } from '../utils/parseStatus.js';
+import { SOURCE_LABEL } from '../utils/labels.js';
+import { saveFile, safeFileName } from '../utils/nativeDownload.js';
 import {
   FileText, Search, Settings, Upload, Loader2, AlertCircle,
   ChevronRight, Trash2, File, Link, PenLine, Database, RefreshCw,
   Filter, X, CheckSquare, Square, BookOpen, Share2,
   Tag as TagIcon, HelpCircle, Plus, BarChart3, MessageSquare,
-  Ban, RotateCcw, Zap
+  Ban, RotateCcw, Zap, Download
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -46,14 +48,6 @@ const STATUS_OPTIONS = [
   { value: 'pending', label: '待解析' }
 ];
 
-// 文档来源类型的展示名（列表里不再直接暴露后端 type 字段值）
-const SOURCE_LABEL = {
-  file: '文件上传',
-  url: '网页链接',
-  manual: '手动创建',
-  faq: 'FAQ'
-};
-
 function KBDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -79,6 +73,7 @@ function KBDetail() {
   const [listError, setListError] = useState(null);
   const [batchParsing, setBatchParsing] = useState(false);
   const [batchStopping, setBatchStopping] = useState(false);
+  const [batchDownloading, setBatchDownloading] = useState(false);
   const [notice, setNotice] = useState(null);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -325,6 +320,43 @@ function KBDetail() {
     }
   };
 
+  // 批量下载：后端把选中文档打包成 ZIP 返回（上限 200 个文件 / 512 MiB，
+  // 无原文件的条目会被跳过）。超过上限先在前端拦下，避免传到一半才被 400 拒绝。
+  const handleBatchDownload = async () => {
+    const items = docs.filter((d) => selectedDocs.has(d.id));
+    if (items.length === 0) return;
+    if (items.length > 200) {
+      alert(`单次最多下载 200 个文档，当前已选 ${items.length} 个，请分批下载。`);
+      return;
+    }
+    const totalBytes = items.reduce((n, d) => n + (d.file_size || 0), 0);
+    if (totalBytes > 300 * 1024 * 1024) {
+      const ok = window.confirm(
+        `已选 ${items.length} 个文档，原始文件合计约 ${formatBytes(totalBytes)}，打包下载可能较慢且占用较多流量。继续？`
+      );
+      if (!ok) return;
+    }
+    setBatchDownloading(true);
+    setNotice(null);
+    try {
+      const stamp = new Date().toISOString().slice(0, 10);
+      const fileName = `${safeFileName(kb?.name, '知识库')}_${items.length}份_${stamp}.zip`;
+      const res = await saveFile({
+        path: Knowledge.batchDownloadPath(id),
+        method: 'POST',
+        body: { ids: items.map((d) => d.id) },
+        fileName
+      });
+      setNotice(res.via === 'native' ? `已保存到 ${res.message}` : `已下载 ${res.fileName}`);
+      setSelectedDocs(new Set());
+      setBatchMode(false);
+    } catch (err) {
+      alert('下载失败：' + (err.message || '未知错误'));
+    } finally {
+      setBatchDownloading(false);
+    }
+  };
+
   // 单文档快捷操作（列表行内）
   const handleStopDoc = async (doc) => {
     try {
@@ -372,6 +404,9 @@ function KBDetail() {
   const stoppableCount = batchMode
     ? docs.filter((d) => selectedDocs.has(d.id) && isInFlight(d.parse_status)).length
     : 0;
+
+  // 批量操作互斥：任一批量任务进行中，其余按钮全部禁用，避免并发操作互相踩状态
+  const busy = batchParsing || batchDeleting || batchStopping || batchDownloading;
 
   return (
     <div className="p-4">
@@ -599,27 +634,36 @@ function KBDetail() {
                       {stoppableCount > 0 && ` · ${stoppableCount} 项解析中`}
                     </span>
                   </div>
-                  <div className="flex gap-2">
+                  {/* 四个动作在手机上一行放不下，用 2×2 网格；每格高度一致，避免误触 */}
+                  <div className="grid grid-cols-2 gap-2">
                     <button
                       onClick={handleBatchReparse}
-                      disabled={batchParsing || batchDeleting || batchStopping}
-                      className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-brand-600 px-2 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                      disabled={busy}
+                      className="flex items-center justify-center gap-1 rounded-lg bg-brand-600 px-2 py-1.5 text-xs font-medium text-white disabled:opacity-50"
                     >
                       {batchParsing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
                       重新解析
                     </button>
                     <button
                       onClick={handleBatchCancelParse}
-                      disabled={batchParsing || batchDeleting || batchStopping || stoppableCount === 0}
-                      className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-amber-500 px-2 py-1.5 text-xs font-medium text-white disabled:opacity-40"
+                      disabled={busy || stoppableCount === 0}
+                      className="flex items-center justify-center gap-1 rounded-lg bg-amber-500 px-2 py-1.5 text-xs font-medium text-white disabled:opacity-40"
                     >
                       {batchStopping ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Ban className="h-3.5 w-3.5" />}
                       停止解析
                     </button>
                     <button
+                      onClick={handleBatchDownload}
+                      disabled={busy}
+                      className="flex items-center justify-center gap-1 rounded-lg bg-surface-subtle px-2 py-1.5 text-xs font-medium text-gray-700 disabled:opacity-50"
+                    >
+                      {batchDownloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                      下载 ZIP
+                    </button>
+                    <button
                       onClick={handleBatchDelete}
-                      disabled={batchParsing || batchDeleting || batchStopping}
-                      className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-red-600 px-2 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                      disabled={busy}
+                      className="flex items-center justify-center gap-1 rounded-lg bg-red-600 px-2 py-1.5 text-xs font-medium text-white disabled:opacity-50"
                     >
                       {batchDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                       删除
@@ -665,6 +709,13 @@ function KBDetail() {
                             <span>子任务剩余 {doc.pending_subtasks_count}</span>
                           )}
                         </div>
+                        {/* 失败原因直接摊在列表里：此前只能进详情页且详情页也不显示，
+                            用户看到「失败」却无从判断是文件损坏、超限还是后端异常 */}
+                        {doc.parse_status === 'failed' && doc.error_message && (
+                          <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-red-600">
+                            {doc.error_message}
+                          </p>
+                        )}
                       </div>
                       {/* 行内快捷操作：解析中可停止，失败/已取消可重新解析。
                           放在行右侧且 stopPropagation，避免误触进入详情页 */}

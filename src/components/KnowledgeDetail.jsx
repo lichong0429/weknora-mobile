@@ -4,7 +4,7 @@ import { useAsync } from '../hooks/useApi.js';
 import { Knowledge } from '../api/endpoints.js';
 import { get, fetchPreview } from '../api/client.js';
 import { getBaseUrl } from '../config.js';
-import { Loader2, AlertCircle, Trash2, RefreshCw, XCircle, Save, ArrowLeft, ChevronDown, ChevronUp, FileText, Maximize2, X } from 'lucide-react';
+import { Loader2, AlertCircle, Trash2, RefreshCw, XCircle, Save, ArrowLeft, ChevronDown, ChevronUp, FileText, Maximize2, X, Download, Activity, Ban } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -12,6 +12,12 @@ import KnowledgeChunks from './KnowledgeChunks.jsx';
 import { MarkdownImage, resolveImageUrls } from './MarkdownImage.jsx';
 import { useImageHydrate } from '../hooks/useImageHydrate.js';
 import { pushBackHandler } from '../backHandler.js';
+import { saveFile, safeFileName } from '../utils/nativeDownload.js';
+import { SOURCE_LABEL } from '../utils/labels.js';
+import { clsx } from 'clsx';
+import {
+  statusMeta, isInFlight, extractStages, spanMeta, hasRealTrace, stageLabel, formatDuration, formatBytes
+} from '../utils/parseStatus.js';
 
 // 预览默认展示上限（字符数）。此前 6000 对长文档仍需手动展开；提升到 30000 覆盖绝大多数文档，
 // 超过时仍显示「展开全部」。fetchPreview 侧已把读取上限从 6064 字节提升到 2MB，二者配合保证完整显示。
@@ -78,6 +84,19 @@ function KnowledgeDetail() {
   const [content, setContent] = useState('');
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadNotice, setDownloadNotice] = useState(null);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [reparsing, setReparsing] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+
+  // 解析阶段追踪：GET /knowledge/{id}/stages
+  // 注意：本 hook 必须位于下方所有提前 return 之前（v1.5.4 白屏教训）
+  const { data: stagesRes, loading: stagesLoading, run: reloadStages } = useAsync(
+    () => Knowledge.stages(id),
+    [id]
+  );
+  const stagesPayload = stagesRes?.data;
 
   useEffect(() => {
     if (knowledge) {
@@ -215,20 +234,28 @@ function KnowledgeDetail() {
   };
 
   const handleReparse = async () => {
+    setReparsing(true);
     try {
       await Knowledge.reparse(id);
       run();
+      reloadStages();
     } catch (err) {
       alert(err.message);
+    } finally {
+      setReparsing(false);
     }
   };
 
   const handleCancel = async () => {
+    setCancelling(true);
     try {
       await Knowledge.cancelParse(id);
       run();
+      reloadStages();
     } catch (err) {
       alert(err.message);
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -244,6 +271,33 @@ function KnowledgeDetail() {
   // Markdown 路径不需要（由 components.img = MarkdownImage 处理）。
   useImageHydrate(previewHtmlRef, displayPreview, isHtml);
   useImageHydrate(fullscreenHtmlRef, preview, isHtml && fullscreen);
+
+  // ---- 解析诊断（纯计算 + 事件处理，无 hook，可安全放在提前 return 之前）----
+  const stages = extractStages(stagesPayload?.trace);
+  const traceReal = hasRealTrace(stagesPayload);
+  const lastError = stagesPayload?.last_error;
+  const recordStatus = knowledge?.parse_status;
+  const recordStatusMeta = statusMeta(recordStatus);
+  const failureMessage = knowledge?.error_message || lastError?.message || '';
+  const failureStage = lastError?.stage || lastError?.name || '';
+  const failureCode = lastError?.code || lastError?.error_code || '';
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    setDownloadNotice(null);
+    try {
+      // 优先用原始文件名（保留扩展名），否则退回标题
+      const baseName = safeFileName(
+        knowledge?.file_name || knowledge?.title || `knowledge-${id}`
+      );
+      const res = await saveFile({ path: Knowledge.downloadPath(id), fileName: baseName });
+      setDownloadNotice(res.via === 'native' ? `已保存到 ${res.message}` : `已下载 ${res.fileName}`);
+    } catch (err) {
+      setDownloadNotice('下载失败：' + (err.message || '未知错误'));
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -330,18 +384,158 @@ function KnowledgeDetail() {
             <h2 className="mb-1 text-lg font-bold text-gray-900">{knowledge.title || knowledge.file_name}</h2>
             <p className="text-sm text-gray-500">{knowledge.description || '暂无描述'}</p>
             <div className="mt-3 flex flex-wrap gap-2">
-              <span className="rounded-lg bg-gray-100 px-2 py-1 text-xs text-gray-600">{knowledge.type}</span>
-              <span className="rounded-lg bg-gray-100 px-2 py-1 text-xs text-gray-600">{knowledge.parse_status}</span>
+              <span className="rounded-lg bg-gray-100 px-2 py-1 text-xs text-gray-600">
+                {SOURCE_LABEL[knowledge.type] || knowledge.type}
+              </span>
+              <span className={clsx('inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium', recordStatusMeta.chip)}>
+                {isInFlight(recordStatus) && <Loader2 className="h-3 w-3 animate-spin" />}
+                {recordStatusMeta.label}
+              </span>
               <span className="rounded-lg bg-gray-100 px-2 py-1 text-xs text-gray-600">{knowledge.enable_status}</span>
               {knowledge.file_size && (
                 <span className="rounded-lg bg-gray-100 px-2 py-1 text-xs text-gray-600">
-                  {(knowledge.file_size / 1024).toFixed(1)} KB
+                  {formatBytes(knowledge.file_size)}
+                </span>
+              )}
+              {recordStatus === 'finalizing' && knowledge.pending_subtasks_count > 0 && (
+                <span className="rounded-lg bg-indigo-50 px-2 py-1 text-xs text-indigo-700">
+                  增强子任务剩余 {knowledge.pending_subtasks_count}
                 </span>
               )}
             </div>
+
+            {/* 失败原因：此前失败只显示一个「failed」，用户无法判断是文件问题还是后端问题 */}
+            {failureMessage && (
+              <div className="mt-3 flex items-start gap-2 rounded-xl bg-red-50 p-3 text-xs text-red-700">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium">
+                    解析失败{failureStage ? `（阶段：${stageLabel(failureStage)}）` : ''}
+                    {failureCode ? ` · ${failureCode}` : ''}
+                  </p>
+                  <p className="mt-1 break-all leading-relaxed">{failureMessage}</p>
+                </div>
+              </div>
+            )}
+
+            {/* 解析的开始/停止：与知识库列表页的批量操作对应，这里针对单条 */}
+            <div className="mt-3 flex gap-2">
+              {isInFlight(recordStatus) ? (
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  disabled={cancelling}
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-amber-500 py-2 text-xs font-medium text-white disabled:opacity-50"
+                >
+                  {cancelling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Ban className="h-3.5 w-3.5" />}
+                  停止解析
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleReparse}
+                  disabled={reparsing}
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-brand-600 py-2 text-xs font-medium text-white disabled:opacity-50"
+                >
+                  {reparsing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                  重新解析
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleDownload}
+                disabled={downloading}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-surface-subtle py-2 text-xs font-medium text-gray-700 disabled:opacity-50"
+              >
+                {downloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                {downloading ? '下载中' : '下载原文件'}
+              </button>
+            </div>
+
+            {downloadNotice && (
+              <p className="mt-2 break-all text-[11px] text-gray-500">{downloadNotice}</p>
+            )}
           </>
         )}
       </div>
+
+      {!editing && (
+        <div className="mb-4 rounded-2xl bg-white p-4 shadow-sm">
+          <button
+            type="button"
+            onClick={() => setShowDiagnostics((v) => !v)}
+            className="flex w-full items-center gap-2 text-left"
+          >
+            <Activity className="h-4 w-4 text-gray-500" />
+            <span className="min-w-0 flex-1 text-sm font-semibold text-gray-900">
+              解析诊断
+              {stagesPayload?.current_stage && isInFlight(recordStatus) && (
+                <span className="ml-1.5 text-xs font-normal text-blue-600">
+                  当前阶段：{stageLabel(stagesPayload.current_stage)}
+                </span>
+              )}
+            </span>
+            {showDiagnostics ? <ChevronUp className="h-4 w-4 text-gray-400" /> : <ChevronDown className="h-4 w-4 text-gray-400" />}
+          </button>
+
+          {/* 阶段时间线：后端把解析拆成 5 个阶段，失败会按 DAG 把下游标记为已取消，
+              因此这里能直接看出「炸伤范围」 */}
+          <div className="mt-3 space-y-1.5">
+            {stagesLoading && (
+              <p className="flex items-center gap-1.5 text-xs text-gray-500">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> 读取阶段数据…
+              </p>
+            )}
+            {!stagesLoading && stages.map((stage) => {
+              const meta = spanMeta(stage.status);
+              return (
+                <div key={stage.name} className="flex items-center gap-2 text-xs">
+                  <span className={clsx('h-1.5 w-1.5 shrink-0 rounded-full', stage.status === 'running' ? 'bg-blue-500' : stage.status === 'done' ? 'bg-emerald-500' : stage.status === 'failed' ? 'bg-red-500' : 'bg-gray-300')} />
+                  <span className="w-16 shrink-0 text-gray-700">{stageLabel(stage.name)}</span>
+                  <span className={clsx('shrink-0 rounded-md px-1.5 py-0.5 font-medium', meta.chip)}>{meta.label}</span>
+                  {stage.duration_ms ? (
+                    <span className="text-gray-400">{formatDuration(stage.duration_ms)}</span>
+                  ) : null}
+                  {stage.error_message ? (
+                    <span className="min-w-0 flex-1 truncate text-red-600">{stage.error_message}</span>
+                  ) : null}
+                </div>
+              );
+            })}
+            {!stagesLoading && !traceReal && (
+              <p className="pt-1 text-[11px] leading-relaxed text-gray-400">
+                该条目没有阶段级追踪数据（可能是启用追踪之前解析的文档，或后端未开启追踪）。
+                上面的阶段状态取自文档当前状态，仅供参考。
+              </p>
+            )}
+          </div>
+
+          {showDiagnostics && (
+            <div className="mt-3 space-y-2 border-t border-gray-100 pt-3 text-[11px] text-gray-500">
+              <p>尝试次数：第 {stagesPayload?.attempt ?? 0} 次（最新第 {stagesPayload?.latest_attempt ?? 0} 次）</p>
+              {stagesPayload?.last_activity_at && <p>最后活动：{stagesPayload.last_activity_at}</p>}
+              {stagesPayload?.stall_state && (
+                <p className="text-amber-600">
+                  队列状态：{stagesPayload.stall_state === 'queued' ? '排队等待中（任务积压）' : '疑似卡住'}
+                </p>
+              )}
+              {lastError && (
+                <p className="break-all text-red-600">
+                  最后一次错误：{stageLabel(lastError.name || lastError.stage)}
+                  {failureCode ? ` · ${failureCode}` : ''} — {lastError.message}
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={() => reloadStages()}
+                className="rounded-lg bg-surface-subtle px-2 py-1 font-medium text-gray-700"
+              >
+                刷新诊断数据
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {!editing && (
         <>
@@ -447,13 +641,15 @@ function KnowledgeDetail() {
                       在浏览器中打开
                     </a>
                   )}
-                  <a
-                    href={binaryKind.blobUrl}
-                    download
-                    className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-gray-100 px-3 py-2 text-xs font-medium text-gray-700 active:scale-95"
+                  <button
+                    type="button"
+                    onClick={handleDownload}
+                    disabled={downloading}
+                    className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-gray-100 px-3 py-2 text-xs font-medium text-gray-700 active:scale-95 disabled:opacity-50"
                   >
-                    下载文件
-                  </a>
+                    {downloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                    {downloading ? '下载中' : '下载文件'}
+                  </button>
                 </div>
                 {showPreviewDebug && binaryKind.rawText && (
                   <div className="rounded-lg bg-gray-900 p-2 text-xs text-gray-100 break-all">
@@ -638,14 +834,6 @@ function mimeToKind(mime, size) {
   if (mime.startsWith('audio/')) return '音频';
   if (mime.startsWith('video/')) return '视频';
   return '二进制';
-}
-
-function formatBytes(bytes) {
-  if (!bytes || bytes < 0) return '';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
 // 拼一个能在浏览器里直接打开的预览 URL（带 X-API-Key）
