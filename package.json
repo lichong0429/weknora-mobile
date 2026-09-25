@@ -1,7 +1,7 @@
 {
   "name": "weknora-mobile",
   "private": true,
-  "version": "1.7.1",
+  "version": "1.7.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,7 +11,8 @@
     "check:secrets": "node scripts/check-secrets.mjs",
     "check:hooks": "python scripts/check-hooks-order.py",
     "check:secrets:self-test": "node scripts/check-secrets.mjs --self-test",
-    "check": "node scripts/check-secrets.mjs && python scripts/check-hooks-order.py"
+    "check": "node scripts/check-secrets.mjs && node scripts/test-stream-protocol.mjs && python scripts/check-hooks-order.py",
+    "test:stream": "node scripts/test-stream-protocol.mjs"
   },
   "dependencies": {
     "clsx": "^2.0.0",

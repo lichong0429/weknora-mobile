@@ -75,3 +75,6 @@ dist-download
 
 # 机器本地构建配置（含本机绝对路径，不入库）
 .bubblewrap/config.json
+
+# 本地临时脚本/探针（不入库，避免把内网地址等带进公开仓库）
+/tmp/

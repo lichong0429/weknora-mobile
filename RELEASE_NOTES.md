@@ -1,115 +1,115 @@
 <!-- 发版前请将本文件内容替换为「当版」说明；若留空或删除本文件，CI 会自动回退为 Full Changelog 链接。 -->
 
-# WeKnora Mobile v1.7.0
+# WeKnora Mobile v1.7.2
 
-发布日期：2026-09-24
+发布日期：2026-09-25
 
-**P1 功能补齐**：批量下载（首次让 App 内下载真正可用）、解析失败原因可见、解析阶段时间线。附带修复一个「下载按钮按了没反应」的历史缺陷。
-
----
-
-## 一、批量下载：先修基础设施，再做功能
-
-### 原来为什么下不了
-
-网页端与 App 内的下载体验完全不同，根因在 Android WebView 的能力边界：
-
-| 方案 | 浏览器 / PWA | Android WebView |
-|---|---|---|
-| `<a href="blob:..." download>` | 可用 | **无效**（WebView 忽略 `download` 属性，blob 下载不实现） |
-| `navigator.share({ files })` | 可用 | **不支持**（WebView 未实现 Web Share API） |
-| 打开 URL 交给系统浏览器 | 可用 | 不可用（需要 `X-API-Key` 请求头 + POST body，浏览器给不了） |
-
-也就是说 App 里原来的「下载文件」按钮**从来就点不动**（它是 `<a download>`），这不是修 bug 能解决的，必须有原生通路。
-
-### 现在的实现
-
-新增原生下载桥 `WeKnoraBridge.download(method, url, body, fileName, apiKey, requestId)`：
-
-1. 前端把**绝对 URL + API Key + 请求体**交给原生（原生读不到 localStorage，因此由前端解析后传入）
-2. 原生用 `HttpURLConnection` 直接发请求，**流式写入**磁盘，不经内存 —— 后端批量下载上限是 200 个文件 / 512 MiB，走「blob 转 base64 过桥」会直接撑爆 WebView 内存
-3. 落盘位置：Android 10+ 写入 **`下载/WeKnora/`**（MediaStore，无需任何存储权限）；Android 9 及以下写入应用专属下载目录（同样免权限）
-4. 完成/失败通过 `evaluateJavascript` 回调 `window.__weknoraDownload(requestId, ok, message)`，前端弹提示
-5. 失败时不生成残缺文件：**先确认 HTTP 200 再创建目标文件**，并回滚已创建的 MediaStore 条目；错误消息优先取后端 JSON 的 `error.message`（如 403 权限不足）
-6. 文件名消毒（剥离路径分隔符与控制字符）+ 优先采用服务端 `Content-Disposition`（含 RFC 5987 的 `filename*`），避免中文名乱码
-
-非原生环境（PWA / 桌面浏览器）自动回退到 `fetch → blob → a[download]`，两条路径由同一个 `saveFile()` 入口分流。
-
-### 批量下载入口
-
-知识库文档列表 → 批量 → 选中 → **下载 ZIP**。前端按后端约束做了前置拦截：
-
-- 超过 200 个文件直接拦下并提示分批（后端 `max=200`，否则传到一半才被 400 拒绝）
-- 合计超过 300 MB 先弹确认（后端上限 512 MiB，弱网下大包体验差）
-- 文件名形如 `知识库名_12份_2026-09-24.zip`
-
-> 已知行为：后端对**无原文件的条目会自动跳过**（如纯手动创建的条目），ZIP 内条目数可能少于所选数量，这是服务端既有语义，不做前端伪造。
+**关键修复**：知识库问答「收不到回答」的真正根因已定位并修复 —— App 用 `done` 字段判断流结束，而后端第一个事件就带 `done:true`，导致客户端**在第一帧就退出**，一个回答都读不到。网页端正常、只有 App 收不到回答，原因就在这里。
 
 ---
 
-## 二、解析失败原因可见
+## 一、根因（已用真实服务复现）
 
-### 之前
+### 现象
 
-文档解析失败后，列表与详情页都只显示一个英文 `failed`。用户无法区分是文件损坏、格式不支持、体积超限，还是后端模型/队列异常 —— 只能反复点「重新解析」碰运气。
+知识库问答提问后，界面固定显示：
 
-### 现在
+> 未收到回答。可能原因：①后端未配置大语言模型；②所选知识库无相关内容；③网络连接异常。
 
-`knowledge.error_message` 与 `/stages` 的 `last_error` 都会被展示：
+网页端同一知识库、同一问题一切正常。
 
-- **列表行内**：失败条目直接显示失败原因（最多 2 行，超出省略）
-- **详情页**：红色告警块显示「解析失败（阶段：分块）· ERROR_CODE」+ 完整原因文本
-- 详情页同时提供**停止解析 / 重新解析 / 下载原文件**三个动作，与列表页的批量操作对应
+### 定位过程
+
+对实际部署（NAS 上的 WeKnora 0.8.0）直接发起问答并抓原始 SSE，服务端**完全正常**：
+
+- 版本 0.8.0，3 个「知识问答」类型模型全部可用（逐个实测均能出答案）
+- 检索命中、20+ 个 `answer` 事件、正常收到 `complete`
+- 换端口（8080 / 8088）、换 `Accept` 头、换模型、换知识库，全部正常
+
+问题出在客户端。抓到的**第一个事件**是：
+
+```json
+{"response_type":"agent_query","content":"","done":true, ...}
+```
+
+而 App 的读取循环写的是：
+
+```js
+for await (const ev of chatStream(...)) {
+  ...
+  if (done) break;      // ← 第一帧就命中，直接退出
+}
+```
+
+`done` 在 WeKnora 的协议里表示「**该事件本身**已完整」，**不是**「整条流结束」。
+后端源码注释写得很明确（`internal/handler/session/helpers.go`）：
+
+> The frontend should use **'complete'** response_type to detect stream completion
+> Sending an extra empty 'answer' event with done:true causes frontend issues
+
+第一个事件 `agent_query` 就是用来在回放会话时标注「用户问了什么」的，它自带 `done:true`。
+于是客户端在第一帧退出 → 没有 answer → 触发「未收到回答」提示。
+
+### 证据
+
+用 App 的原始循环逻辑回放真实事件序列：
+
+```
+服务端实际发出 18 个事件：
+  #0 type=agent_query  done=True   content_len=0     ← App 在这里 break
+  #1 type=tool_call    done=False
+  #2 type=tool_result  done=False
+  #3.. answer ×多帧
+=== 复刻 App 逻辑的结果 ===
+在第 0 个事件处 break（done=true）
+最终 answer 内容长度: 0
+App 会认为"收到回答"吗: False
+→ 结论：App 会显示「未收到回答」，尽管后端实际发了回答。
+
+对照（改为仅在 complete 时结束）: answer 长度 = 236
+```
+
+### 修复
+
+新增 `src/utils/chatStreamProtocol.js`，把终止语义独立成可测试的模块：
+
+- **只有** `response_type === 'complete'` 视为流结束
+- `error` 且 `done:true` 也表示服务端已终止本轮（否则会一直空等连接关闭）
+- 其余事件类型（`agent_query` / `tool_call` / `tool_result` / `references` / `thinking` …）
+  无论 `done` 取值都必须继续读取
+
+### 防回归
+
+新增 `scripts/test-stream-protocol.mjs`，用从真实服务抓下来的事件序列（只保留类型与
+`done` 取值，不含任何正文）同时验证「旧逻辑必然拿不到回答」与「新逻辑能读全回答」，
+共 14 项断言。已接入 `npm run check` 与 CI：这个 bug 不可能再悄悄回来。
 
 ---
 
-## 三、解析阶段时间线（解析诊断）
+## 二、同版本附带的两项改进
 
-调用 `GET /knowledge/{id}/stages`，把一次解析拆成 5 个阶段展示：
-
-| 阶段 | 含义 |
-|---|---|
-| 文档解析 `docreader` | 原文件内容抽取 |
-| 分块 `chunking` | 切分为可检索片段 |
-| 向量化 `embedding` | 生成向量并写入索引 |
-| 多模态 `multimodal` | 图片等多媒体处理（纯文本文档会标记为「跳过」） |
-| 后处理 `postprocess` | 摘要 / 问题生成 / 图谱抽取等增强 |
-
-设计要点：
-
-- **炸伤范围可见**：后端按 DAG 依赖把失败阶段的下游标记为 `cancelled`，因此一眼能看出「分块失败 → 向量化/多模态/后处理全部取消」，而不是三个转圈的不确定状态
-- **阶段状态语义**：等待 / 进行中 / 完成 / 失败 / 跳过 / 已取消，各自独立配色
-- **不做假数据的诚实处理**：后端对启用追踪之前解析的旧文档会返回 5 个 pending 占位阶段。此时界面会明确标注「该条目没有阶段级追踪数据，上面的阶段状态取自文档当前状态，仅供参考」，而不是把占位符伪装成真实进度
-- 展开后可看：第几次尝试（attempt / latest_attempt）、最后活动时间、队列状态（排队积压 / 疑似卡住）、最后一次错误
-
----
+1. **诊断能力**：问答失败不再给三句无法互斥的猜测，而是按「实际收到了什么」给出唯一结论
+   （未建连 / 鉴权 / 路由 / 5xx / 非 SSE / 帧全解析失败 / 零字节 / 后端错误事件 /
+   流被切断 / 正常结束但无内容），并可一键复制证据。
+2. **诊断页「问答链路自检」**：真实发一次最小提问并观察事件流，同时检查后端是否存在
+   KnowledgeQA 类型模型；使用临时会话，结束后自动删除。
 
 ## 变更文件
 
-**新增**
-
-- `src/utils/nativeDownload.js` — 下载入口：原生桥优先，浏览器回退；含回调注册与 10 分钟超时
-- `src/utils/labels.js` — 文档来源类型的中文映射（KBDetail / KnowledgeDetail 共用，避免文案漂移）
-
-**修改**
-
-- `webview-app/.../MainActivity.java` — 新增原生下载桥（流式写盘 + MediaStore + 错误提取 + JS 回调 + 文件名消毒）
-- `src/api/client.js` — 新增 `buildApiUrl`、`downloadAsBlob`、`parseContentDispositionName`
-- `src/api/endpoints.js` — 新增 `stages`、`downloadPath`、`batchDownloadPath`
-- `src/utils/parseStatus.js` — 新增阶段语义（`STAGE_ORDER` / `extractStages` / `hasRealTrace` / `stageLabel` / `spanMeta` / `formatDuration`）；`formatBytes` 补齐 GB 档
-- `src/components/KnowledgeDetail.jsx` — 解析诊断卡片、失败原因、启停/下载动作；`<a download>` 改为原生下载
-- `src/components/KBDetail.jsx` — 批量下载（2×2 操作网格）、行内失败原因
-- `package.json` / `webview-app/app/build.gradle` — 版本 1.7.0
+- `src/utils/chatStreamProtocol.js` — 新增（终止语义 + 注释记录事故背景）
+- `scripts/test-stream-protocol.mjs` — 新增（14 项回归断言）
+- `src/components/Chat.jsx` — 终止条件由 `done` 改为 `isTerminalStreamEvent`
+- `.github/workflows/build-apk.yml` — CI 增加回归测试步骤
+- `package.json` / `webview-app/app/build.gradle` — 版本 1.7.2
 
 ## 验证
 
-- webview 构建 + PWA 构建均通过
-- 产物级校验：`batch-download` / `解析诊断` / `文档解析` / `下载 ZIP` / `__weknoraDownloadPending` / `WeKnoraBridge` 均已进入 bundle
-- 阶段与状态工具函数单测 17 项通过（阶段顺序与后端常量一致、失败下游级联 cancelled、占位回退、真实 trace 判定、中文标签、格式化）
-- Java 侧结构校验：花括号平衡、桥方法签名与 JS 调用签名一致（原生层由 CI 编译验证）
-- 后端契约以官方 Go 源码为准核对：`BatchDownloadKnowledgeRequest{ ids }`（max 200 / 512 MiB）、`Knowledge.ErrorMessage`、`GET /knowledge/{id}/stages` 响应结构、`types.AllStages` 与 `SpanStatus*` 常量
+- 对真实部署逐项实测：后端版本/模型/端口/Accept 头/模型选择/知识库内容匹配度，确认服务端无异常
+- 用真实事件序列证明旧逻辑在第 0 帧退出、新逻辑读到全部回答
+- 回归测试 14 项通过；构建通过；产物校验确认终止集合已打包且旧的 `done) break` 已消失
+- 安全体检通过（无阻断项）
 
 ## 尚未验证
 
-1. **未对运行中的实例做端到端联调**（同 v1.6.0）：手头留存的 API Key 对自建实例返回 401，无可用凭据。接口契约来自官方源码。
-2. **原生下载桥未经真机验证**：构建环境无 Android SDK，无法编译 Java，只做了结构核对。首次使用若失败，界面会显示后端返回的具体错误（如 403），Toast 会给出落盘路径或失败原因。
+真机复测由用户完成：本次修复针对客户端循环逻辑，已在真实服务的事件序列上验证，
+但未在手机实机跑过完整交互。

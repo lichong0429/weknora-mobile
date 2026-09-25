@@ -47,6 +47,10 @@ jobs:
           node scripts/check-secrets.mjs --self-test   # 先验证规则本身有效（规则写错会静默全绿）
           node scripts/check-secrets.mjs
 
+      # 回归测试：锁定「用 done 判断流结束导致问答永远收不到回答」这个事故
+      - name: Stream protocol regression test
+        run: node scripts/test-stream-protocol.mjs
+
       - name: Build web assets
         run: |
           rm -rf dist-webview node_modules/.vite

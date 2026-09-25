@@ -13,6 +13,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { MarkdownImage } from './MarkdownImage.jsx';
 import { diagnoseNoAnswer, formatDiagnosisReport } from '../utils/chatDiagnosis.js';
+import { isTerminalStreamEvent } from '../utils/chatStreamProtocol.js';
 import { APP_VERSION } from '../utils/appVersion.js';
 
 function Chat() {
@@ -179,7 +180,7 @@ function Chat() {
         if (!json) continue;
         // 兼容后端可能用 response_type 或 type 作为事件字段名
         const response_type = json.response_type || json.type;
-        const { content, knowledge_references, done } = json;
+        const { content, knowledge_references } = json;
         // 注意：StreamResponse.id 是**事件** id，助手消息 id 在 assistant_message_id。
         // 之前直接用 id 会把这个值当成 message_id 发给「停止生成」接口，导致停止无效。
         if (json.assistant_message_id || json.id) {
@@ -228,7 +229,10 @@ function Chat() {
           return [...prev.slice(0, -1), next];
         });
 
-        if (done) break;
+        // 终止条件：只有 complete（或 error+done）才代表流结束。
+        // 千万不能用 `if (done) break;` —— 后端第一个 agent_query 事件就带 done=true，
+        // 那样会在第一帧退出，一个 answer 都读不到（这正是"问答没有回答"的根因）。
+        if (isTerminalStreamEvent(json)) break;
       }
       // 流结束但没收到任何内容 → 用采集到的证据给出**具体**结论，而不是三句无法互斥的猜测
       if (!receivedAny) {
