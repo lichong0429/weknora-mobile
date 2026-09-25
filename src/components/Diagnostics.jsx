@@ -1,15 +1,16 @@
 import { useState, useEffect } from 'react';
 import { getLogs, clearLogs } from '../api/debug.js';
 import { getConfig } from '../config.js';
+import { chatStream } from '../api/client.js';
 import { KB, Model, VectorStore, WebSearch, Agent, Session, Tenant } from '../api/endpoints.js';
+import { diagnoseNoAnswer, formatDiagnosisReport } from '../utils/chatDiagnosis.js';
+import { APP_VERSION } from '../utils/appVersion.js';
 import {
   Trash2, RefreshCw, AlertCircle, CheckCircle, ChevronDown, ChevronUp,
   Server, Copy, Check, Terminal, Building2, KeyRound, FlaskConical,
-  Search, Link2
+  Search, Link2, Stethoscope, PlayCircle
 } from 'lucide-react';
 import { clsx } from 'clsx';
-
-const APP_VERSION = 'v1.5.4';
 
 function extractList(result) {
   if (Array.isArray(result)) return result;
@@ -79,6 +80,111 @@ function Diagnostics() {
   const [customPath, setCustomPath] = useState('/knowledge-bases');
   const [customResult, setCustomResult] = useState(null);
   const [customLoading, setCustomLoading] = useState(false);
+  // 问答链路自检：真正发一次最小提问并观察 SSE，把"为什么没有回答"变成可判定结论
+  const [probe, setProbe] = useState({ running: false, verdict: null, report: null, answer: '' });
+  const [probeCopied, setProbeCopied] = useState(false);
+
+  const runChatProbe = async () => {
+    setProbe({ running: true, verdict: null, report: null, answer: '' });
+    const diag = { status: 0, contentType: '', frames: 0, bytes: 0, parseErrors: 0, sampleRaw: '', requestId: '' };
+    const events = { types: {}, finishReason: '', errorMessage: '', sawComplete: false };
+    let tempSessionId = null;
+    try {
+      // 1) 先看后端有没有「知识问答」类型的模型 —— 这是最常见的失败原因，且无需发请求即可判定
+      const models = extractList(await Model.list());
+      const qaModels = models.filter((m) => String(m.type || '').toLowerCase() === 'knowledgeqa');
+
+      // 2) 挑一个有文档的知识库，尽量贴近真实提问场景
+      const kbs = extractList(await KB.list());
+      const kb = kbs.find((k) => (k.knowledge_count || 0) > 0) || kbs[0];
+      if (!kb) {
+        const verdict = {
+          level: 'empty',
+          verdict: '当前 API Key 看不到任何知识库，无法进行问答。',
+          action: '确认 Key 与知识库属于同一租户（可先用上方「租户诊断」确认）。',
+          detail: [`知识库数量：0`, `问答模型数量：${qaModels.length}`]
+        };
+        setProbe({ running: false, verdict, answer: '', report: formatDiagnosisReport({ ...verdict, appVersion: APP_VERSION, modelCount: qaModels.length }) });
+        return;
+      }
+
+      // 3) 用临时会话发一条最小提问（结束后删除，不在用户会话列表里留垃圾）
+      const created = await Session.create({ title: '问答链路自检（可删除）' });
+      tempSessionId = created?.data?.id;
+      if (!tempSessionId) throw new Error('无法创建临时会话');
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 30000);
+      let answer = '';
+      try {
+        for await (const ev of chatStream(
+          tempSessionId,
+          { query: '你好，请回复一句话确认链路正常', knowledge_base_ids: [kb.id] },
+          { onMeta: (d) => Object.assign(diag, d), signal: controller.signal }
+        )) {
+          const j = ev.json;
+          if (!j) continue;
+          const rt = j.response_type || j.type;
+          if (rt) events.types[rt] = (events.types[rt] || 0) + 1;
+          if (j.finish_reason) events.finishReason = j.finish_reason;
+          if (rt === 'complete') events.sawComplete = true;
+          if (rt === 'error') events.errorMessage = j.content || events.errorMessage;
+          if (rt === 'answer' && j.content) answer += j.content;
+          if (answer.length >= 200) { controller.abort(); break; }
+        }
+      } catch (e) {
+        if (e.name !== 'AbortError') throw e;
+      } finally {
+        clearTimeout(timer);
+      }
+
+      const modelNote = qaModels.length === 0
+        ? '后端模型列表里没有「知识问答(KnowledgeQA)」类型模型 —— 这本身就会让问答无法产生回答。'
+        : '';
+      let verdict;
+      if (answer.trim()) {
+        verdict = {
+          level: 'ok',
+          verdict: '链路正常：后端模型可用，问答能返回内容。',
+          action: `说明问题出在这个知识库本身（例如文档未解析完成、内容与提问不匹配）。自检所用知识库：${kb.name || kb.id}。`,
+          detail: [`回答片段：${answer.trim().slice(0, 120)}`]
+        };
+      } else {
+        verdict = diagnoseNoAnswer(diag, events);
+      }
+      const detail = [
+        `自检知识库：${kb.name || kb.id}（文档数 ${kb.knowledge_count ?? '未知'}）`,
+        `问答模型数量：${qaModels.length}`,
+        ...(verdict.detail || [])
+      ];
+      setProbe({
+        running: false,
+        verdict: { ...verdict, detail: modelNote ? [modelNote, ...detail] : detail },
+        answer: answer.trim(),
+        report: formatDiagnosisReport({
+          ...verdict,
+          detail: modelNote ? [modelNote, ...detail] : detail,
+          modelCount: qaModels.length,
+          kbCount: kbs.length,
+          appVersion: APP_VERSION
+        })
+      });
+    } catch (err) {
+      const verdict = diagnoseNoAnswer(diag, events);
+      const detail = [...(verdict.detail || []), `自检异常：${err.message || err.name}`];
+      setProbe({
+        running: false,
+        verdict: { ...verdict, detail },
+        answer: '',
+        report: formatDiagnosisReport({ ...verdict, detail, appVersion: APP_VERSION })
+      });
+    } finally {
+      // 清理临时会话，避免污染用户的会话列表
+      if (tempSessionId) {
+        try { await Session.remove(tempSessionId); } catch {}
+      }
+    }
+  };
 
   const refresh = () => {
     setLogs(getLogs());
@@ -186,6 +292,80 @@ function Diagnostics() {
           <li>在“自定义探测”中尝试切换认证头（X-API-Key / Bearer）或加 tenant_id 参数。</li>
           <li>把下方“原始响应”或“curl 命令”复制到终端执行，确认后端确实返回空数组。</li>
         </ul>
+      </div>
+
+      {/* 问答链路自检：上面的接口测试只覆盖 GET 列表接口，无法回答"为什么提问没回答" */}
+      <div className="mb-4 rounded-2xl bg-white p-4 shadow-sm">
+        <div className="mb-2 flex items-center gap-2">
+          <Stethoscope className="h-5 w-5 text-gray-700" />
+          <h3 className="font-semibold text-gray-900">问答链路自检</h3>
+        </div>
+        <p className="mb-3 text-xs leading-relaxed text-gray-500">
+          会真实发送一次最小提问并观察后端的事件流，据此给出**唯一结论**：
+          是模型没配置、鉴权不足、代理拦截，还是知识库本身没有内容。
+          自检使用临时会话，结束后自动删除。
+        </p>
+        <button
+          onClick={runChatProbe}
+          disabled={probe.running}
+          className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          {probe.running
+            ? <RefreshCw className="h-4 w-4 animate-spin" />
+            : <PlayCircle className="h-4 w-4" />}
+          {probe.running ? '自检中（最多 30 秒）…' : '开始自检'}
+        </button>
+
+        {probe.verdict && (
+          <div
+            className={clsx(
+              'mt-3 rounded-xl border p-3',
+              probe.verdict.level === 'ok'
+                ? 'border-emerald-200 bg-emerald-50'
+                : probe.verdict.level === 'empty' || probe.verdict.level === 'stream'
+                  ? 'border-amber-200 bg-amber-50'
+                  : 'border-red-200 bg-red-50'
+            )}
+          >
+            <p className={clsx(
+              'flex items-start gap-1.5 text-sm font-semibold',
+              probe.verdict.level === 'ok' ? 'text-emerald-800'
+                : probe.verdict.level === 'empty' || probe.verdict.level === 'stream' ? 'text-amber-800'
+                  : 'text-red-800'
+            )}>
+              {probe.verdict.level === 'ok'
+                ? <CheckCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />}
+              {probe.verdict.verdict}
+            </p>
+            {probe.verdict.action && (
+              <p className="mt-1 text-xs leading-relaxed text-gray-700">{probe.verdict.action}</p>
+            )}
+            <div className="mt-2 space-y-0.5 border-t border-black/5 pt-2">
+              {(probe.verdict.detail || []).map((d) => (
+                <p key={d} className="break-all text-[11px] text-gray-600">{d}</p>
+              ))}
+            </div>
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(probe.report || '');
+                    setProbeCopied(true);
+                    setTimeout(() => setProbeCopied(false), 2000);
+                  } catch {
+                    window.prompt('复制以下诊断信息：', probe.report || '');
+                  }
+                }}
+                className="flex items-center gap-1 rounded-lg bg-white px-2 py-1 text-[11px] font-medium text-gray-700 shadow-sm"
+              >
+                {probeCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                {probeCopied ? '已复制' : '复制完整诊断'}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="mb-4 rounded-2xl bg-white p-4 shadow-sm">

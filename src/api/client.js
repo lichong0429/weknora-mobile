@@ -375,7 +375,11 @@ export function uploadFileWithProgress(kbId, file, { fileName, tagId, channel, o
 }
 
 // SSE streaming for chat endpoints
-async function* sseParser(reader) {
+//
+// stats 用于诊断：把「到底收到了什么」变成可判定的事实。
+// 历史上「未收到回答」只能给出三条猜测（模型没配/知识库没内容/网络异常），
+// 无法区分是流没开、开了但零帧、帧到了但解析失败、还是后端显式报错。
+async function* sseParser(reader, stats) {
   const decoder = new TextDecoder();
   let buffer = '';
   let current = { event: 'message', dataLines: [] };
@@ -387,6 +391,7 @@ async function* sseParser(reader) {
       data: current.dataLines.join('\n')
     };
     current = { event: 'message', dataLines: [] };
+    if (stats) stats.frames += 1;
     return event;
   };
 
@@ -397,6 +402,7 @@ async function* sseParser(reader) {
       if (ev) yield ev;
       break;
     }
+    if (stats && value) stats.bytes += value.length;
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
     buffer = lines.pop();
@@ -413,10 +419,39 @@ async function* sseParser(reader) {
   }
 }
 
-export async function* chatStream(sessionId, payload, { type = 'knowledge', signal } = {}) {
+/**
+ * 知识问答 / 智能体问答的 SSE 流。
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.type]   'knowledge' | 'agent'
+ * @param {AbortSignal} [opts.signal]
+ * @param {(diag: object) => void} [opts.onMeta]
+ *   诊断回调，每次状态变化时调用，字段：
+ *   status / contentType / requestId / frames(收到帧数) / bytes / parseErrors / sampleRaw
+ *   用于把「没有回答」定位到具体环节，而不是给用户三句猜测。
+ */
+export async function* chatStream(sessionId, payload, { type = 'knowledge', signal, onMeta } = {}) {
   const endpoint = type === 'agent' ? `/agent-chat/${sessionId}` : `/knowledge-chat/${sessionId}`;
   const url = buildUrl(endpoint);
-  const headers = getHeaders(true);
+  const stats = { frames: 0, bytes: 0, parseErrors: 0, sampleRaw: '' };
+  const diag = {
+    endpoint,
+    url,
+    status: 0,
+    contentType: '',
+    requestId: '',
+    frames: 0,
+    bytes: 0,
+    parseErrors: 0,
+    sampleRaw: ''
+  };
+  const report = (patch) => {
+    Object.assign(diag, patch, { frames: stats.frames, bytes: stats.bytes });
+    try { onMeta?.({ ...diag }); } catch {}
+  };
+
+  // Accept 用 text/event-stream：这是 SSE 的正确内容协商，经反向代理时更不易被改写
+  const headers = { ...getHeaders(true), Accept: 'text/event-stream' };
   logRequest({ method: 'POST', url, headers, body: payload });
 
   const res = await fetch(url, {
@@ -425,9 +460,21 @@ export async function* chatStream(sessionId, payload, { type = 'knowledge', sign
     body: JSON.stringify(payload),
     signal
   });
+  report({
+    status: res.status,
+    contentType: res.headers.get('content-type') || '',
+    requestId: res.headers.get('x-request-id') || res.headers.get('x-requestid') || ''
+  });
+
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
-    try { msg = (await res.json()).error?.message || msg; } catch {}
+    let raw = '';
+    try {
+      raw = await res.text();
+      msg = JSON.parse(raw).error?.message || msg;
+    } catch {}
+    stats.sampleRaw = (raw || '').slice(0, 300);
+    report({ sampleRaw: stats.sampleRaw });
     logResponse({ status: res.status, statusText: res.statusText, error: msg });
     throw new Error(msg);
   }
@@ -435,6 +482,8 @@ export async function* chatStream(sessionId, payload, { type = 'knowledge', sign
   const contentType = res.headers.get('content-type') || '';
   if (!contentType.includes('text/event-stream') && !contentType.includes('application/octet-stream')) {
     const text = await res.text();
+    stats.sampleRaw = text.slice(0, 300);
+    report({ sampleRaw: stats.sampleRaw });
     logResponse({ status: res.status, statusText: res.statusText, body: text });
     // 尝试解析为 JSON 错误
     try {
@@ -455,11 +504,18 @@ export async function* chatStream(sessionId, payload, { type = 'knowledge', sign
     throw new Error('服务器响应不支持流式读取（ReadableStream 不可用）。');
   }
   logResponse({ status: res.status, statusText: 'SSE stream started', body: '[event-stream]' });
-  for await (const ev of sseParser(res.body.getReader())) {
+  for await (const ev of sseParser(res.body.getReader(), stats)) {
     try {
       yield { ...ev, json: JSON.parse(ev.data) };
     } catch {
+      // 解析失败的帧以前是静默丢弃的：若后端发出非 JSON 载荷（如纯文本错误、
+      // HTML 片段），客户端会"一帧不认"却只显示「未收到回答」。这里留证据。
+      stats.parseErrors += 1;
+      if (!stats.sampleRaw) stats.sampleRaw = String(ev.data || '').slice(0, 300);
+      report({ parseErrors: stats.parseErrors, sampleRaw: stats.sampleRaw });
       yield ev;
     }
   }
+  report({});
 }
+
