@@ -19,6 +19,12 @@
 export const CITE_SCHEME = 'cite:';
 export const CITE_KB_PREFIX = `${CITE_SCHEME}kb:`;
 export const CITE_WEB_PREFIX = `${CITE_SCHEME}web:`;
+// wiki 页面链接：答案里出现 [[slug]] / [[slug|显示名]]，网页端渲染成可点的 wiki 链接。
+// 这里沿用 App 既有的 wiki: 协议（WikiView 内部识别 wiki: 并打开对应 wiki 页面）。
+export const WIKI_PREFIX = 'wiki:';
+
+// [[slug]] 或 [[slug|显示名]]
+const WIKI_LINK_RE = /\[\[([^\]\n]+)\]\]/g;
 
 const KB_TAG_RE = /<kb\b([^>]*?)\s*\/?>/gi;
 const WEB_TAG_RE = /<web\b([^>]*?)\s*\/?>/gi;
@@ -46,14 +52,23 @@ function parseAttrs(raw) {
  */
 export function stripIncompleteCitationTag(content) {
   const src = String(content || '');
-  const start = src.lastIndexOf('<');
-  if (start < 0) return src;
-  const tail = src.slice(start);
-  if (tail.includes('>')) return src; // 已闭合，交给正常流程
-  const isCitationPrefix = tail === '<'
-    || /^<k(?:b(?:\s[\s\S]*)?)?$/i.test(tail)
-    || /^<w(?:e(?:b(?:\s[\s\S]*)?)?)?$/i.test(tail);
-  return isCitationPrefix ? src.slice(0, start) : src;
+  let out = src;
+  const start = out.lastIndexOf('<');
+  if (start >= 0) {
+    const tail = out.slice(start);
+    if (!tail.includes('>')) {
+      const isCitationPrefix = tail === '<'
+        || /^<k(?:b(?:\s[\s\S]*)?)?$/i.test(tail)
+        || /^<w(?:e(?:b(?:\s[\s\S]*)?)?)?$/i.test(tail);
+      if (isCitationPrefix) out = out.slice(0, start);
+    }
+  }
+  // [[wiki 链接同理：只收到 "[[" 或 "[[conce" 时先藏起来，等收全再渲染
+  const wikiStart = out.lastIndexOf('[[');
+  if (wikiStart >= 0 && !out.slice(wikiStart).includes(']]')) {
+    out = out.slice(0, wikiStart);
+  }
+  return out;
 }
 
 function normalizeTitle(t) {
@@ -183,11 +198,32 @@ export function extractCitations(content, references) {
     return `[${n}](${CITE_KB_PREFIX}${n})`;
   });
 
+  // [[wiki 页面]] 链接：与网页端同一套显示规则 ——
+  // [[slug|显示名]] 用显示名；[[concepts/xxx]] 去掉第一段路径，显示 xxx
+  text = text.replace(WIKI_LINK_RE, (_full, inner) => {
+    const raw = String(inner || '').trim();
+    if (!raw) return _full;
+    const pipe = raw.indexOf('|');
+    const slug = (pipe > 0 ? raw.slice(0, pipe) : raw).trim();
+    if (!slug) return _full;
+    let display = slug;
+    if (pipe > 0) {
+      display = raw.slice(pipe + 1).trim() || slug;
+    } else {
+      const parts = slug.split('/');
+      display = parts.length > 1 ? parts.slice(1).join('/') : slug;
+    }
+    // 显示名里若含 Markdown 链接语法会破坏结构，做最必要的转义
+    const safeDisplay = display.replace(/[[\]]/g, '');
+    return `[${safeDisplay}](${WIKI_PREFIX}${encodeURIComponent(slug)})`;
+  });
+
   return { text, markers };
 }
 
 export function hasCitations(content) {
-  return new RegExp(ANY_CITATION_TAG_RE.source, 'i').test(String(content || ''));
+  const s = String(content || '');
+  return new RegExp(ANY_CITATION_TAG_RE.source, 'i').test(s) || /\[\[[^\]\n]+\]\]/.test(s);
 }
 
 // 思考块：部分模型（DeepSeek 系等）把推理写进正文的 <think>…</think>。

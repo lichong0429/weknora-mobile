@@ -84,7 +84,8 @@ function resolveMediaUrls(html) {
   return html;
 }
 
-function WikiView({ kbId }) {
+// initialSlug：从聊天正文的 [[wiki 页面]] 链接跳进来时，直接打开该页
+function WikiView({ kbId, initialSlug }) {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
@@ -271,6 +272,17 @@ function WikiView({ kbId }) {
       handleOpenPage({ slug: ref, id: ref, title: ref });
     }
   }, [findPageByRef, handleOpenPage]);
+
+  // 从聊天正文点 [[wiki 页面]] 跳进来时直接打开目标页。
+  // openWikiRef 会先按已加载列表匹配，匹配不到就用 slug 直接请求，
+  // 所以不依赖列表是否已经加载完；用 ref 记住已处理过的 slug，避免重复打开。
+  const openedInitialSlugRef = useRef('');
+  useEffect(() => {
+    const slug = String(initialSlug || '').trim();
+    if (!slug || openedInitialSlugRef.current === slug) return;
+    openedInitialSlugRef.current = slug;
+    openWikiRef(slug);
+  }, [initialSlug, openWikiRef]);
 
   const extractWikiSlug = useCallback((raw) => {
       if (!raw || typeof raw !== 'string') return '';

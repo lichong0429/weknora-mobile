@@ -32,9 +32,19 @@ WeKnora 在回答正文里插入两类标记（真实回答中一次出现十几
 |---|---|---|
 | `<kb …/>` 文档引用 | 行内胶囊显示文档名，点击**按 chunk id 现取原文**弹层 | 同网页端（胶囊 + 弹层） |
 | `<web …/>` 联网引用 | 行内胶囊显示域名，点击开新标签 | 同网页端（点击交系统浏览器打开） |
+| `[[wiki 页面]]` 内容链接 | 可点，跳转到对应 wiki 页面 | 同网页端（跳到该知识库的 wiki 标签并直接打开该页） |
 | 引用列表被截断时 | 按 chunk id 调 `GET /chunks/by-id/{id}` 现取 | 同网页端 |
 | 模型给出非 UUID 引用（`FAQ-1` / `DOC-2` / 纯序号） | 映射回真实 chunk | 同网页端 |
-| 流式中未收完的半个标签 | 隐藏，否则正文漏出 `<kb doc="1-s2.0` | 同网页端 |
+| 流式中未收完的半个标签 | 隐藏，否则正文漏出 `<kb doc="1-s2.0` | 同网页端（`[[` 同理） |
+
+### wiki 链接的落地方式
+
+聊天正文里的 `[[concepts/xxx]]` 此前是**纯文本**。本次接通到 App 已有的 wiki 能力：
+
+- `[[slug|显示名]]` 用显示名；`[[concepts/xxx]]` 按网页端规则去掉首段路径，显示 `xxx`
+- 点击后跳到该知识库（会话中选中的知识库）的 wiki 标签，并由 `WikiView` 的 `openWikiRef`
+  直接打开目标页 —— 它会先在已加载列表中匹配，匹配不到就用 slug 直接请求，因此不依赖列表加载进度
+- 会话里没有可用知识库时，wiki 链接渲染为普通文字而非死链（点了没反应比不可点更糟）
 
 ### 关键实现细节
 
@@ -54,10 +64,12 @@ WeKnora 在回答正文里插入两类标记（真实回答中一次出现十几
 
 ## 变更文件
 
-- `src/utils/citationMarkers.js` — 新增（标记解析、非 UUID 引用还原、半标签处理、思考块抽取）
-- `scripts/test-citation-markers.mjs` — 新增（回归测试，含混排编号、半标签、序号还原等边界）
+- `src/utils/citationMarkers.js` — 新增（标记解析、wiki 链接、非 UUID 引用还原、半标签处理、思考块抽取）
+- `scripts/test-citation-markers.mjs` — 新增（回归测试，含混排编号、半标签、序号还原、wiki 链接等边界）
 - `src/api/endpoints.js` — 新增 `Chunk.byId`（`GET /chunks/by-id/{id}`）
-- `src/components/Chat.jsx` — 行内引用胶囊、引用详情弹层（现取原文）、思考块、返回键处理
+- `src/components/Chat.jsx` — 行内引用胶囊、引用详情弹层（现取原文）、wiki 链接跳转、思考块、返回键处理
+- `src/components/WikiView.jsx` — 新增 `initialSlug` 入参：进入后直接打开指定 wiki 页
+- `src/components/KBDetail.jsx` — 带 `wikiSlug` 进入时自动切到 wiki 标签
 - `.github/workflows/build-apk.yml` — CI 回归测试步骤同时跑引用与流语义两组测试
 - `package.json` / `webview-app/app/build.gradle` — 版本 1.7.3
 

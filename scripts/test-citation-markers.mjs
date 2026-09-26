@@ -115,7 +115,20 @@ const webRef = resolveCitation({ kind: 'web', url: 'https://www.nature.com/artic
 check('联网引用可解析', webRef._web, true);
 check('联网引用缺标题时用域名兜底', resolveCitation({ kind: 'web', url: 'https://x.com/a' }, refs).knowledge_title, 'x.com');
 
-// --- 7) 展示辅助与整体判定 ---
+// --- 7) [[wiki 页面]] 链接 ---
+const wiki1 = extractCitations('详见 [[concepts/混合基质膜]] 与 [[entities/zif-8|ZIF-8 条目]]。', refs);
+check('wiki 链接显示名：去首段路径', wiki1.text.includes('[混合基质膜](wiki:'), true);
+check('wiki 链接显示名：带 | 时用显式显示名', wiki1.text.includes('[ZIF-8 条目](wiki:'), true);
+ok('slug 被编码进链接', wiki1.text.includes('wiki:' + encodeURIComponent('concepts/混合基质膜')));
+ok('无残留双方括号', !wiki1.text.includes('[['));
+check('wiki 链接不产生引用标记（不需弹层）', wiki1.markers.length, 0);
+check('未闭合 [[ 被截断', stripIncompleteCitationTag('说明 [[conce'), '说明 ');
+check('已闭合 [[ ]] 不受影响', stripIncompleteCitationTag('见 [[a/b]] 页').includes('[[a/b]]'), true);
+check('普通单方括号不受影响', stripIncompleteCitationTag('[普通链接](http://a.com)'), '[普通链接](http://a.com)');
+check('hasCitations 识别 wiki 链接', hasCitations('见 [[a/b]]'), true);
+check('显示名中的方括号被清理', extractCitations('[[a/b|[x]]]', refs).text.includes('[x](wiki:'), true);
+
+// --- 8) 展示辅助与整体判定 ---
 // 中间省略：两端各留 5 字符（名字本身以 . 结尾时会连出多个点，与网页端算法一致）
 check('文档名中间省略', truncateMiddle('1-s2.0-S2542529325001968-main.pdf', 13), '1-s2....n.pdf');
 check('短名不省略', truncateMiddle('a.pdf'), 'a.pdf');

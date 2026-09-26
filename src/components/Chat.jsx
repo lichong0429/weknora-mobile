@@ -17,7 +17,7 @@ import { diagnoseNoAnswer, formatDiagnosisReport } from '../utils/chatDiagnosis.
 import { isTerminalStreamEvent } from '../utils/chatStreamProtocol.js';
 import {
   extractCitations, extractInlineThinking, resolveCitation, stripIncompleteCitationTag,
-  truncateMiddle, domainOf, CITE_KB_PREFIX, CITE_WEB_PREFIX
+  truncateMiddle, domainOf, CITE_KB_PREFIX, CITE_WEB_PREFIX, WIKI_PREFIX
 } from '../utils/citationMarkers.js';
 import { APP_VERSION } from '../utils/appVersion.js';
 
@@ -128,6 +128,15 @@ function Chat() {
     );
     const resolved = resolveCitation(marker, allRefs) || {};
     openRef({ ...resolved, _citeNumber: num });
+  };
+
+  // [[wiki 页面]] 链接：App 内 wiki 页挂在 /kb/{id} 的 wiki 标签下，
+  // 这里带着 slug 跳过去，由 KBDetail 切到 wiki 标签并让 WikiView 打开该页。
+  // 没有可用知识库时不提供点击（渲染成普通文字），避免出现点了没反应的死链。
+  const wikiKbId = (selectedKBs && selectedKBs[0]) || (kbs.length === 1 ? kbs[0].id : '');
+  const openWikiPage = (slug) => {
+    if (!slug || !wikiKbId) return;
+    navigate(`/kb/${wikiKbId}`, { state: { wikiSlug: slug } });
   };
 
   // 引用详情里可能拿不到正文（后端只回传引用列表里靠前的片段，
@@ -493,6 +502,7 @@ function Chat() {
                       content={bodyContent || (msg.isStream ? '思考中…' : '')}
                       references={msg.knowledge_references}
                       onOpenCitation={openCitationMarker}
+                      onOpenWiki={wikiKbId ? openWikiPage : undefined}
                     />
                   ) : (
                     <ReactMarkdown
@@ -773,7 +783,7 @@ function Chat() {
 
 // 助手正文渲染：把 <kb …/> 文档引用与 <web …/> 联网引用变成可点胶囊，并把 <think> 抽成思考块。
 // 独立成组件是为了能用 useMemo（messages.map 里不能调 hook）。
-function AssistantMarkdown({ content, references, onOpenCitation }) {
+function AssistantMarkdown({ content, references, onOpenCitation, onOpenWiki }) {
   const { text, markers } = useMemo(
     () => extractCitations(stripIncompleteCitationTag(content || ''), references),
     [content, references]
@@ -782,6 +792,26 @@ function AssistantMarkdown({ content, references, onOpenCitation }) {
   const components = useMemo(() => ({
     img: MarkdownImage,
     a: ({ href, children, ...rest }) => {
+      // [[wiki 页面]] 链接：跳到该知识库的 wiki 页
+      if (typeof href === 'string' && href.startsWith(WIKI_PREFIX)) {
+        let slug = href.slice(WIKI_PREFIX.length);
+        try { slug = decodeURIComponent(slug); } catch {}
+        const label = typeof children === 'string' ? children : slug;
+        if (!onOpenWiki) {
+          return <span className="text-brand-600">{label}</span>;
+        }
+        return (
+          <button
+            type="button"
+            onClick={() => onOpenWiki(slug)}
+            title={`打开 wiki 页面：${slug}`}
+            className="mx-0.5 inline-flex items-center gap-0.5 rounded-md bg-violet-50 px-1 py-0.5 align-middle text-[11px] font-medium text-violet-700 active:scale-95"
+          >
+            <BookOpen className="h-3 w-3 shrink-0" />
+            {label}
+          </button>
+        );
+      }
       if (typeof href === 'string' && (href.startsWith(CITE_KB_PREFIX) || href.startsWith(CITE_WEB_PREFIX))) {
         const isWeb = href.startsWith(CITE_WEB_PREFIX);
         const num = Number(href.slice((isWeb ? CITE_WEB_PREFIX : CITE_KB_PREFIX).length));
@@ -817,15 +847,17 @@ function AssistantMarkdown({ content, references, onOpenCitation }) {
         <a {...rest} href={href} target="_blank" rel="noopener noreferrer">{children}</a>
       );
     }
-  }), [byNumber, onOpenCitation]);
+  }), [byNumber, onOpenCitation, onOpenWiki]);
 
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       rehypePlugins={[rehypeRaw]}
-      // 放行自有 cite: 协议，其余仍走默认白名单（不要整体关闭，避免给模型输出开洞）
+      // 放行自有 cite:/wiki: 协议，其余仍走默认白名单（不要整体关闭，避免给模型输出开洞）
       urlTransform={(url) => (
-        url.startsWith(CITE_KB_PREFIX) || url.startsWith(CITE_WEB_PREFIX) ? url : defaultUrlTransform(url)
+        url.startsWith(CITE_KB_PREFIX) || url.startsWith(CITE_WEB_PREFIX) || url.startsWith(WIKI_PREFIX)
+          ? url
+          : defaultUrlTransform(url)
       )}
       components={components}
     >

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
 import { KB, Knowledge, Tag, Session } from '../api/endpoints.js';
 import KBSettings from './KBSettings.jsx';
@@ -51,6 +51,7 @@ const STATUS_OPTIONS = [
 function KBDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const [activeTab, setActiveTab] = useState('docs');
 
   const { data: kbRes, loading: kbLoading, error: kbError, run: refreshKb, setData: setKbRes } = useAsync(() => KB.detail(id), [id]);
@@ -88,6 +89,14 @@ function KBDetail() {
   const wikiEnabled = kb?.indexing_strategy?.wiki_enabled || kb?.wiki_config != null;
   const graphEnabled = kb?.indexing_strategy?.graph_enabled || false;
   const isFaq = kb?.type === 'faq';
+
+  // 从聊天正文的 [[wiki 页面]] 链接跳进来：自动切到 wiki 标签，
+  // 并把 slug 交给 WikiView 直接打开该页（wiki 未启用时保持原标签，不做无意义的跳转）
+  const wikiSlugFromRoute = location.state?.wikiSlug || '';
+  useEffect(() => {
+    if (!wikiSlugFromRoute || !wikiEnabled) return;
+    setActiveTab('wiki');
+  }, [wikiSlugFromRoute, wikiEnabled]);
 
   // Fetch tags once
   useEffect(() => {
@@ -769,7 +778,7 @@ function KBDetail() {
             </div>
           )}
 
-          {activeTab === 'wiki' && <WikiView kbId={id} />}
+          {activeTab === 'wiki' && <WikiView kbId={id} initialSlug={wikiSlugFromRoute} />}
           {activeTab === 'graph' && <GraphView kbId={id} />}
 
           {activeTab === 'search' && (
