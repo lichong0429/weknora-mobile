@@ -1,24 +1,30 @@
-import { useState, useEffect, useRef } from 'react';
-import { useParams, useLocation } from 'react-router-dom';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
-import { Session, Message, KB, Agent, Model } from '../api/endpoints.js';
+import { Session, Message, KB, Agent, Model, Chunk } from '../api/endpoints.js';
 import { chatStream } from '../api/client.js';
+import { pushBackHandler } from '../backHandler.js';
 import {
   Loader2, AlertCircle, Send, Square, Bot, Settings2, BookOpen, Sparkles, User, Cpu,
-  Copy, Check, Stethoscope
+  Copy, Check, Stethoscope, X, FileText, ExternalLink, ChevronDown, ChevronUp, Quote, Globe
 } from 'lucide-react';
 import { clsx } from 'clsx';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { MarkdownImage } from './MarkdownImage.jsx';
 import { diagnoseNoAnswer, formatDiagnosisReport } from '../utils/chatDiagnosis.js';
 import { isTerminalStreamEvent } from '../utils/chatStreamProtocol.js';
+import {
+  extractCitations, extractInlineThinking, resolveCitation, stripIncompleteCitationTag,
+  truncateMiddle, domainOf, CITE_KB_PREFIX, CITE_WEB_PREFIX
+} from '../utils/citationMarkers.js';
 import { APP_VERSION } from '../utils/appVersion.js';
 
 function Chat() {
   const { id } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const { data: sessionRes, loading: sessionLoading, error: sessionError, run: refreshSession } = useAsync(() => Session.detail(id), [id]);
   const { data: messagesRes, loading: messagesLoading, error: messagesError, run: refreshMessages } = useAsync(() => Message.load(id, { limit: 50 }), [id]);
   const { data: kbRes } = useAsync(() => KB.list(), []);
@@ -38,6 +44,10 @@ function Chat() {
   const [noAnswerReport, setNoAnswerReport] = useState(null);
   const [lastDiagnosis, setLastDiagnosis] = useState(null);
   const [copied, setCopied] = useState(false);
+  // 引用详情：点开某条引用时展示原文与来源，以及每条消息的"展开全部引用"状态
+  const [activeRef, setActiveRef] = useState(null);
+  const [expandedRefs, setExpandedRefs] = useState({});
+  const [refCopied, setRefCopied] = useState(false);
   const abortRef = useRef(null);
   const bottomRef = useRef(null);
   // 流式进行中：阻止服务端历史消息回写覆盖正在显示的回答
@@ -93,6 +103,54 @@ function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streaming]);
 
+  // 引用详情弹层：注册返回栈，让系统返回键/手势先关弹层，而不是退出会话页
+  useEffect(() => {
+    if (!activeRef) return undefined;
+    return pushBackHandler(() => {
+      setActiveRef(null);
+      return true;
+    });
+  }, [activeRef]);
+
+  const openRef = (ref) => {
+    setRefCopied(false);
+    setActiveRef(ref);
+  };
+
+  // 点正文里的引用角标：把标记对到后端返回的引用对象上，复用同一个详情弹层。
+  // references 里 id 就是 chunk id，用它匹配；放在全部消息里找，避免流式期间
+  // 引用还挂在其它消息对象上的情况。不用 flatMap，兼容旧 WebView。
+  const openCitationMarker = (marker, num) => {
+    if (!marker) return;
+    const allRefs = messages.reduce(
+      (acc, m) => acc.concat(m.knowledge_references || []),
+      []
+    );
+    const resolved = resolveCitation(marker, allRefs) || {};
+    openRef({ ...resolved, _citeNumber: num });
+  };
+
+  // 引用详情里可能拿不到正文（后端只回传引用列表里靠前的片段，
+  // 正文标注的引用常常超出该列表）—— 这时按 chunk id 现取，与网页端行为一致。
+  const [refChunk, setRefChunk] = useState({ loading: false, error: null, data: null });
+  useEffect(() => {
+    if (!activeRef || activeRef._web || activeRef.content || !activeRef.id) {
+      setRefChunk({ loading: false, error: null, data: null });
+      return undefined;
+    }
+    let cancelled = false;
+    setRefChunk({ loading: true, error: null, data: null });
+    Chunk.byId(activeRef.id)
+      .then((res) => {
+        if (cancelled) return;
+        setRefChunk({ loading: false, error: null, data: res?.data || res || null });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setRefChunk({ loading: false, error: err?.message || '加载失败', data: null });
+      });
+    return () => { cancelled = true; };
+  }, [activeRef]);
   // 从路由 state 预选 KB / agent（从知识库「开始对话」或智能体「测试对话」跳转而来）
   useEffect(() => {
     const stateKbId = location.state?.knowledge_base_id;
@@ -403,7 +461,13 @@ function Chat() {
         )}
 
         <div className="space-y-4">
-          {messages.map((msg, idx) => (
+          {messages.map((msg, idx) => {
+            const isAssistant = msg.role === 'assistant';
+            // 助手正文里的 <think> 抽出来给「思考过程」块；引用标记由 AssistantMarkdown 处理
+            const thinkDigest = isAssistant ? extractInlineThinking(msg.content || '') : null;
+            const bodyContent = thinkDigest ? thinkDigest.text : (msg.content || '');
+            const reasoningText = isAssistant ? (msg.reasoning || thinkDigest.thinking) : '';
+            return (
             <div
               key={msg.id || idx}
               className={clsx('flex', msg.role === 'user' ? 'justify-end' : 'justify-start')}
@@ -420,34 +484,66 @@ function Chat() {
                   {msg.role === 'user' ? <User className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
                   {msg.role === 'user' ? '我' : 'AI'}
                 </div>
-                {msg.role === 'assistant' && msg.reasoning && (
-                  <ThinkingBlock text={msg.reasoning} />
+                {isAssistant && reasoningText && (
+                  <ThinkingBlock text={reasoningText} />
                 )}
                 <div className={msg.role === 'user' ? '' : 'md-body'}>
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    rehypePlugins={[rehypeRaw]}
-                    components={{ img: MarkdownImage }}
-                  >
-                    {msg.content || (msg.isStream ? '思考中…' : '')}
-                  </ReactMarkdown>
+                  {isAssistant ? (
+                    <AssistantMarkdown
+                      content={bodyContent || (msg.isStream ? '思考中…' : '')}
+                      references={msg.knowledge_references}
+                      onOpenCitation={openCitationMarker}
+                    />
+                  ) : (
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      rehypePlugins={[rehypeRaw]}
+                      components={{ img: MarkdownImage }}
+                    >
+                      {msg.content || ''}
+                    </ReactMarkdown>
+                  )}
                 </div>
                 {msg.knowledge_references?.length > 0 && (
                   <div className="mt-3 border-t border-line pt-2">
-                    <p className="mb-1 text-xs font-medium text-ink-muted">引用</p>
+                    <div className="mb-1 flex items-center justify-between">
+                      <p className="flex items-center gap-1 text-xs font-medium text-ink-muted">
+                        <Quote className="h-3 w-3" /> 引用 {msg.knowledge_references.length} 条
+                      </p>
+                      {msg.knowledge_references.length > 3 && (
+                        <button
+                          type="button"
+                          onClick={() => setExpandedRefs((prev) => ({ ...prev, [msg.id]: !prev[msg.id] }))}
+                          className="flex items-center gap-0.5 text-[11px] font-medium text-brand-600"
+                        >
+                          {expandedRefs[msg.id] ? '收起' : `展开全部`}
+                          {expandedRefs[msg.id] ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                        </button>
+                      )}
+                    </div>
                     <div className="space-y-1">
-                      {msg.knowledge_references.slice(0, 3).map((ref, i) => (
-                        <div key={ref.id || i} className="rounded-lg bg-surface-soft p-2 text-xs text-ink-secondary">
-                          <span className="font-medium text-brand-600">{ref.knowledge_title}</span>
-                          <p className="line-clamp-2">{ref.content}</p>
-                        </div>
+                      {(expandedRefs[msg.id] ? msg.knowledge_references : msg.knowledge_references.slice(0, 3)).map((ref, i) => (
+                        // 整块可点：点开看引用原文与来源文档（此前是静态文本，点不动）
+                        <button
+                          type="button"
+                          key={ref.id || i}
+                          onClick={() => openRef(ref)}
+                          className="block w-full rounded-lg bg-surface-soft p-2 text-left text-xs text-ink-secondary active:scale-[0.99]"
+                        >
+                          <span className="flex items-center gap-1 font-medium text-brand-600">
+                            <FileText className="h-3 w-3 shrink-0" />
+                            <span className="truncate">{ref.knowledge_title || ref.knowledge_filename || '引用片段'}</span>
+                          </span>
+                          <p className="mt-0.5 line-clamp-2">{ref.content}</p>
+                        </button>
                       ))}
                     </div>
                   </div>
                 )}
               </div>
             </div>
-          ))}
+            );
+          })}
           <div ref={bottomRef} />
         </div>
       </div>
@@ -539,7 +635,202 @@ function Chat() {
           )}
         </div>
       </div>
+
+      {/* 引用详情弹层：此前引用只是静态文本，点不动；现在可看原文、来源与位置 */}
+      {activeRef && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
+          onClick={() => setActiveRef(null)}
+        >
+          <div
+            className="flex max-h-[82vh] w-full flex-col rounded-t-2xl bg-white"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-2 border-b border-line p-4 pb-3">
+              {activeRef._web
+                ? <Globe className="mt-0.5 h-5 w-5 shrink-0 text-sky-600" />
+                : <Quote className="mt-0.5 h-5 w-5 shrink-0 text-brand-600" />}
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-gray-900">
+                  {activeRef._citeNumber ? `引用 ${activeRef._citeNumber} · ` : ''}
+                  {activeRef.knowledge_title || activeRef.knowledge_filename || '引用片段'}
+                </p>
+                <p className="mt-0.5 truncate text-[11px] text-gray-500">
+                  {activeRef._web
+                    ? activeRef.url
+                    : (activeRef.knowledge_filename || '来源文档')}
+                  {!activeRef._web && activeRef.chunk_index !== undefined && ` · 第 ${activeRef.chunk_index} 段`}
+                  {!activeRef._web && typeof activeRef.score === 'number' && ` · 相关度 ${activeRef.score.toFixed(4)}`}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveRef(null)}
+                className="shrink-0 rounded-full p-1 text-gray-400 hover:bg-gray-100"
+                aria-label="关闭"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              {(activeRef.start_at !== undefined && activeRef.end_at !== undefined) && !activeRef._web && (
+                <p className="mb-2 text-[11px] text-gray-400">
+                  原文位置：第 {activeRef.start_at}–{activeRef.end_at} 字符
+                </p>
+              )}
+
+              {activeRef._web ? (
+                <p className="text-xs leading-relaxed text-gray-600">
+                  这是联网搜索命中的网页，点下方按钮会在浏览器中打开。
+                </p>
+              ) : refChunk.loading ? (
+                <p className="flex items-center gap-1.5 text-xs text-gray-500">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> 正在读取引用原文…
+                </p>
+              ) : refChunk.error ? (
+                <div className="rounded-xl bg-amber-50 p-3 text-xs text-amber-800">
+                  取引用原文失败：{refChunk.error}
+                  <br />
+                  可点下方「查看来源文档」到文档里查看完整内容。
+                </div>
+              ) : (activeRef.content || refChunk.data?.content) ? (
+                <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-gray-800">
+                  {activeRef.content || refChunk.data?.content}
+                </p>
+              ) : (
+                <p className="text-xs leading-relaxed text-gray-500">
+                  这条引用没有可显示的正文（后端只回传引用列表中靠前的片段，正文里标注的引用可能超出该列表）。
+                  {activeRef.knowledge_filename ? ` 来源文档：${activeRef.knowledge_filename}。` : ''}
+                  可点下方「查看来源文档」到文档里查看完整内容。
+                </p>
+              )}
+              {/* 元数据里的 content 常是父块全文，比命中片段更完整，作为补充展示 */}
+              {activeRef.metadata?.content && activeRef.metadata.content !== activeRef.content && (
+                <details className="mt-3 rounded-xl bg-surface-soft p-3">
+                  <summary className="cursor-pointer text-xs font-medium text-gray-700">
+                    查看所在段落全文
+                  </summary>
+                  <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-relaxed text-gray-600">
+                    {activeRef.metadata.content}
+                  </p>
+                </details>
+              )}
+            </div>
+
+            <div className="flex gap-2 border-t border-line p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+              {activeRef._web ? (
+                // 普通 <a> 导航会被原生层的 shouldOverrideUrlLoading 拦下并交给系统浏览器
+                <a
+                  href={activeRef.url}
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-sky-600 py-2.5 text-xs font-medium text-white no-underline"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" /> 打开网页
+                </a>
+              ) : (
+                <>
+                  {activeRef.knowledge_id && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const kid = activeRef.knowledge_id;
+                        setActiveRef(null);
+                        navigate(`/knowledge/${kid}`);
+                      }}
+                      className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-brand-600 py-2.5 text-xs font-medium text-white"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" /> 查看来源文档
+                    </button>
+                  )}
+                  {(activeRef.content || refChunk.data?.content) && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const text = activeRef.content || refChunk.data?.content || '';
+                        try {
+                          await navigator.clipboard.writeText(text);
+                          setRefCopied(true);
+                          setTimeout(() => setRefCopied(false), 2000);
+                        } catch {
+                          window.prompt('复制引用内容：', text);
+                        }
+                      }}
+                      className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-surface-subtle py-2.5 text-xs font-medium text-gray-700"
+                    >
+                      {refCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                      {refCopied ? '已复制' : '复制引用'}
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+// 助手正文渲染：把 <kb …/> 文档引用与 <web …/> 联网引用变成可点胶囊，并把 <think> 抽成思考块。
+// 独立成组件是为了能用 useMemo（messages.map 里不能调 hook）。
+function AssistantMarkdown({ content, references, onOpenCitation }) {
+  const { text, markers } = useMemo(
+    () => extractCitations(stripIncompleteCitationTag(content || ''), references),
+    [content, references]
+  );
+  const byNumber = useMemo(() => new Map(markers.map((m) => [m.number, m])), [markers]);
+  const components = useMemo(() => ({
+    img: MarkdownImage,
+    a: ({ href, children, ...rest }) => {
+      if (typeof href === 'string' && (href.startsWith(CITE_KB_PREFIX) || href.startsWith(CITE_WEB_PREFIX))) {
+        const isWeb = href.startsWith(CITE_WEB_PREFIX);
+        const num = Number(href.slice((isWeb ? CITE_WEB_PREFIX : CITE_KB_PREFIX).length));
+        const marker = byNumber.get(num);
+        if (isWeb) {
+          // 联网引用：显示域名，点击交给系统浏览器（与网页端"新标签打开"等价）
+          const url = marker?.url || '';
+          return (
+            <a
+              href={url}
+              title={marker?.title || url}
+              className="mx-0.5 inline-flex max-w-[10rem] items-center gap-0.5 rounded-md bg-sky-50 px-1 py-0.5 align-middle text-[10px] font-medium text-sky-700 no-underline"
+            >
+              <Globe className="h-2.5 w-2.5 shrink-0" />
+              <span className="truncate">{domainOf(url)}</span>
+            </a>
+          );
+        }
+        // 文档引用：显示文档名（中间省略），点击打开引用详情
+        return (
+          <button
+            type="button"
+            onClick={() => onOpenCitation?.(marker, num)}
+            title={marker?.doc ? `引用：${marker.doc}` : `引用 ${num}`}
+            className="mx-0.5 inline-flex max-w-[10rem] items-center gap-0.5 rounded-md bg-brand-50 px-1 py-0.5 align-middle text-[10px] font-medium text-brand-600 active:scale-95"
+          >
+            <BookOpen className="h-2.5 w-2.5 shrink-0" />
+            <span className="truncate">{truncateMiddle(marker?.doc || '引用')}</span>
+          </button>
+        );
+      }
+      return (
+        <a {...rest} href={href} target="_blank" rel="noopener noreferrer">{children}</a>
+      );
+    }
+  }), [byNumber, onOpenCitation]);
+
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeRaw]}
+      // 放行自有 cite: 协议，其余仍走默认白名单（不要整体关闭，避免给模型输出开洞）
+      urlTransform={(url) => (
+        url.startsWith(CITE_KB_PREFIX) || url.startsWith(CITE_WEB_PREFIX) ? url : defaultUrlTransform(url)
+      )}
+      components={components}
+    >
+      {text}
+    </ReactMarkdown>
   );
 }
 

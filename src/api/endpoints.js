@@ -47,6 +47,13 @@ export const Search = {
   knowledge: (body) => post('/knowledge-search', body)
 };
 
+// 按 chunk id 直接取片段内容。
+// 回答正文里的引用标记常常超出本轮返回的 knowledge_references 列表（列表被截断），
+// 这时点开引用只能靠这个接口现取原文 —— 网页端也是这么做的。
+export const Chunk = {
+  byId: (chunkId) => get(`/chunks/by-id/${chunkId}`)
+};
+
 export const Session = {
   list: (params) => get('/sessions', params),
   create: (body) => post('/sessions', body),
