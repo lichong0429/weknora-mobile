@@ -1,88 +1,85 @@
 <!-- 发版前请将本文件内容替换为「当版」说明；若留空或删除本文件，CI 会自动回退为 Full Changelog 链接。 -->
 
-# WeKnora Mobile v1.7.3
+# WeKnora Mobile v1.7.4
 
-发布日期：2026-09-27
+发布日期：2026-09-29
 
-**修复**：回答正文里的引用此前**完全不显示**（不是"点不开"），已按网页端同款行为补齐 —— 文档引用可点开看原文，联网引用可点开网页。
+**修复**：知识库设置里选好模型后「提示保存成功、实际没保存」——根因是请求体形状不符合后端契约，模型字段被后端静默丢弃。
 
 ---
 
-## 一、问题比"点不开"更严重
+## 一、根因：配置平铺在顶层，被后端静默忽略
 
-原始反馈是"引用内容点不开"。排查后发现实际情况是：**引用标记根本没被渲染出来。**
+`PUT /knowledge-bases/{id}` 的请求体是：
 
-WeKnora 在回答正文里插入两类标记（真实回答中一次出现十几处）：
-
+```go
+type UpdateKnowledgeBaseRequest struct {
+    Name        string                     `json:"name" binding:"required"`
+    Description string                     `json:"description"`
+    Config      *types.KnowledgeBaseConfig `json:"config"`
+}
 ```
-<kb  doc="1-s2.0-S2542529325001968-main.pdf" chunk_id="eddcbaef-…" kb_id="c5ef14fa-…" />
-<web url="https://www.nature.com/articles/x" title="Nature 新闻" />
-```
 
-- 网页端：渲染成行内可点胶囊（文档引用显示文档名，点击弹层看原文；联网引用显示域名，点击开新标签）
-- 手机端：整段正文交给 Markdown 渲染，而 `<kb>` / `<web>` 是未知 HTML 标签，浏览器按规范直接忽略
-  → 正文里这些位置是空的，用户看不到任何可点内容
+也就是说，配置必须**嵌套在 `config` 下**；而 `KnowledgeBaseConfig` 只包含
+`chunking_config` / `image_processing_config` / `faq_config` / `wiki_config` /
+`auto_tag_config` / `profile_config` / `indexing_strategy`。
 
-## 二、按网页端行为对齐（源码逐条核对）
+旧版把 `embedding_model_id`、`summary_model_id`、`vlm_config`、`indexing_strategy`、
+`wiki_config` 全部**平铺在顶层**。Go 的 `json` 解码器默认忽略未知字段，于是：
 
-实现前把官方网页端的 `frontend/src/utils/citationMarkdown.ts` 与
-`composables/useChatCitationPopover.ts` 读完，手机端按同一套语义实现：
+- `name` / `description` 正常落库 → 接口返回成功 → 界面提示「保存成功」
+- 模型与索引配置**一步都没有写入**
 
-| 能力 | 网页端 | 手机端（本次） |
+这正是「显示保存成功，但回头一看还是没选上」的原因。实测对照（真实部署）：
+
+| 请求体形状 | 结果 |
+|---|---|
+| 顶层平铺（旧版） | `indexing_strategy.vector_enabled` 保持原值 → 未保存 |
+| 嵌套 `config`（本次） | `vector_enabled` / `wiki_enabled` / `wiki_config` 全部正确落库 |
+
+## 二、模型配置走独立端点
+
+模型字段在设计上就不属于 `PUT /knowledge-bases/{id}`。网页端把保存拆成两次调用，
+手机端按同一契约对齐：
+
+| 调用 | 用途 | 关键点 |
 |---|---|---|
-| `<kb …/>` 文档引用 | 行内胶囊显示文档名，点击**按 chunk id 现取原文**弹层 | 同网页端（胶囊 + 弹层） |
-| `<web …/>` 联网引用 | 行内胶囊显示域名，点击开新标签 | 同网页端（点击交系统浏览器打开） |
-| `[[wiki 页面]]` 内容链接 | 可点，跳转到对应 wiki 页面 | 同网页端（跳到该知识库的 wiki 标签并直接打开该页） |
-| 引用列表被截断时 | 按 chunk id 调 `GET /chunks/by-id/{id}` 现取 | 同网页端 |
-| 模型给出非 UUID 引用（`FAQ-1` / `DOC-2` / 纯序号） | 映射回真实 chunk | 同网页端 |
-| 流式中未收完的半个标签 | 隐藏，否则正文漏出 `<kb doc="1-s2.0` | 同网页端（`[[` 同理） |
+| `PUT /knowledge-bases/{id}` | 名称、描述、索引策略、Wiki 配置 | 配置必须嵌在 `config` 下 |
+| `PUT /initialization/config/{id}` | Embedding / 摘要 / VLM / 分块 | camelCase；`vlm_config` 及其子字段为 snake_case；`llmModelId` 必填 |
 
-### wiki 链接的落地方式
+对 `documentSplitting` 的 `strategy` / `tokenLimit` / `languages` /
+`tableMetadataInstructions` 四个字段，后端用指针区分「未提供 = 保持不变」与
+「显式空值 = 清空」，因此只在原值存在时才携带，避免把用户既有设置清掉。
 
-聊天正文里的 `[[concepts/xxx]]` 此前是**纯文本**。本次接通到 App 已有的 wiki 能力：
+## 三、不再用「乐观更新」冒充成功
 
-- `[[slug|显示名]]` 用显示名；`[[concepts/xxx]]` 按网页端规则去掉首段路径，显示 `xxx`
-- 点击后跳到该知识库（会话中选中的知识库）的 wiki 标签，并由 `WikiView` 的 `openWikiRef`
-  直接打开目标页 —— 它会先在已加载列表中匹配，匹配不到就用 slug 直接请求，因此不依赖列表加载进度
-- 会话里没有可用知识库时，wiki 链接渲染为普通文字而非死链（点了没反应比不可点更糟）
+旧版保存后直接用本地对象更新界面并提示成功——**这正是假成功得以存在的原因**。
+现在保存后会回读知识库，逐项比对服务端真实状态：
 
-### 关键实现细节
+- 全部一致 → 「保存成功（已回读确认生效）」
+- 有项目未被接受 → 明确列出是哪几项，例如「服务端未接受：摘要 / 合成模型、Wiki 索引」
 
-1. **为什么不用 `#cite:n` 锚点做标记**：App 用 HashRouter，改 hash 会被路由当成跳转，
-   直接把页面弹回首页。因此用自有协议 `cite:kb:n` / `cite:web:n`，并只放行该协议，
-   其余 URL 仍走 react-markdown 的默认白名单（不整体关闭，避免给模型输出开洞）。
-2. **编号按正文顺序**：首版实现按标签类型分两批替换，导致两种标记混排时编号与阅读顺序不一致
-   （先出现的反而编号靠后）—— 已改为单次遍历，并由回归测试锁定。
-3. **同一 chunk 复用同一编号**：避免出现 1、2、3 三个胶囊其实指向同一段内容。
-4. **顺带补上 `<think>`**：部分模型把推理写进正文的 `<think>…</think>`，手机端此前同样因未知标签
-   完全看不到。现在抽出来交给既有的「思考过程」折叠块展示，流式期间也能边出边看。
+这样即便将来后端契约再变化，也会立刻暴露，而不是静默丢数据。
 
-## 三、附带修复（本轮一并处理）
+## 四、顺带改进
 
-- 助手正文里的**引用列表**从"只显示前 3 条静态文本"改为可点、可展开全部、可查看来源文档
-- 弹层支持系统返回键/手势关闭（注册到应用的返回栈，不会误退出会话页）
+直接加载（非代理）的图片此前没有任何失败反馈：取不到就静默空白，用户既看不到图、
+也不知道为什么。现在会显示失败原因并支持重试。
 
-## 变更文件
+## 五、验证
 
-- `src/utils/citationMarkers.js` — 新增（标记解析、wiki 链接、非 UUID 引用还原、半标签处理、思考块抽取）
-- `scripts/test-citation-markers.mjs` — 新增（回归测试，含混排编号、半标签、序号还原、wiki 链接等边界）
-- `src/api/endpoints.js` — 新增 `Chunk.byId`（`GET /chunks/by-id/{id}`）
-- `src/components/Chat.jsx` — 行内引用胶囊、引用详情弹层（现取原文）、wiki 链接跳转、思考块、返回键处理
-- `src/components/WikiView.jsx` — 新增 `initialSlug` 入参：进入后直接打开指定 wiki 页
-- `src/components/KBDetail.jsx` — 带 `wikiSlug` 进入时自动切到 wiki 标签
-- `.github/workflows/build-apk.yml` — CI 回归测试步骤同时跑引用与流语义两组测试
-- `package.json` / `webview-app/app/build.gradle` — 版本 1.7.3
+- 新增 `scripts/test-kb-settings-payload.mjs`（27 项断言）：锁定「配置必须嵌套」、
+  「模型字段不得出现在顶层」、「指针字段不误清空」、「回读比对能判出未保存」
+- 端到端实证（真实部署、临时知识库、跑完即删）：两次调用后回读差异为空，
+  `embedding_model_id` / `summary_model_id` / `vlm_config` / `wiki_enabled` /
+  `wiki_config` 全部落库
+- 安全体检、流语义回归（14 项）、引用解析回归、hook 顺序检查全部通过
 
-## 验证
+## 六、已知问题（服务端，非本应用可修）
 
-- 引用解析回归测试全部通过：真实标记解析、两种标记混排编号、半标签截断、`FAQ-1`/`DOC-2`/序号还原、
-  文档名省略、空值安全
-- 流终止语义回归测试 14 项通过（上一版修复，防止回归）
-- 构建通过；产物校验确认引用模块（`cite:` 协议、`chunks/by-id`、弹层文案）已打包
-- 安全体检通过（无阻断项）
-- 网页端行为以官方源码为准核对，未凭猜测实现
+对部署实例抽样实测：**238 个手动录入（.md）文档全部可正常下载，122 个 PDF 全部 500**，
+错误为 `failed to open file: open /data/files/10000/<doc-id>/xxx.pdf: no such file or directory`；
+PDF 抽取出的图片（`/data/files/10000/exports/*.jpg`）同样不存在。
 
-## 尚未验证
-
-真机复测由用户完成：本轮为纯前端渲染与交互改动，未在手机实机点过引用胶囊；
-联网引用依赖原生层把外部链接交给系统浏览器（沿用现有链接行为）。
+即：数据库里的分块与文本完好（问答仍可用），但**磁盘上的二进制文件已丢失**。
+因此部分文档内的图片无法显示与客户端逻辑无关，需在服务端排查本地存储卷。

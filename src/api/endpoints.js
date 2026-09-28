@@ -4,7 +4,14 @@ export const KB = {
   list: (agentId) => get('/knowledge-bases', agentId ? { agent_id: agentId } : {}),
   create: (body) => post('/knowledge-bases', body),
   detail: (id) => get(`/knowledge-bases/${id}`),
+  // 注意：该接口的请求体是 { name, description, config }，配置必须嵌套在 config 下；
+  // 模型字段不在其中，改模型要走 updateModelConfig。
   update: (id, body) => put(`/knowledge-bases/${id}`, body),
+  // 模型 / 解析配置（embedding、summary、VLM、分块…）。
+  // 网页端的知识库编辑器用同一端点：PUT /api/v1/initialization/config/{kbId}，
+  // 请求体为 camelCase（vlm_config / asr_config 及其子字段为 snake_case）。
+  updateModelConfig: (id, body) => put(`/initialization/config/${id}`, body),
+  modelConfig: (id) => get(`/initialization/config/${id}`),
   remove: (id) => del(`/knowledge-bases/${id}`),
   pin: (id) => put(`/knowledge-bases/${id}/pin`),
   copy: (id, body = {}) => post(`/knowledge-bases/${id}/copy`, body),

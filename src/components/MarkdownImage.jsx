@@ -289,6 +289,14 @@ export function MarkdownImage({ src, alt, title }) {
       title={title}
       loading="lazy"
       className="my-2 max-w-full rounded-lg"
+      // 直接加载（非代理）的图片此前没有任何失败反馈：一张取不到的图会静默
+      // 变成空白，用户既看不到图也不知道为什么。这里统一给出可见的失败提示。
+      onError={() => {
+        setFailed(true);
+        setErrorMsg(isServerSrc(src)
+          ? '服务器返回失败（图片可能已不存在于服务端存储）'
+          : '图片地址取不到内容（可能是外链失效，或引用的文件未随文档一起上传）');
+      }}
     />
   );
 }

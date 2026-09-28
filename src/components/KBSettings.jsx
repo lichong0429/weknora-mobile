@@ -1,7 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useAsync } from '../hooks/useApi.js';
 import { KB, Model } from '../api/endpoints.js';
 import { extractList } from '../utils/list.js';
+import {
+  buildKBUpdateBody, buildModelConfigBody, diffModelConfig
+} from '../utils/kbSettingsPayload.js';
 import {
   Save, Loader2, AlertCircle, Cpu, Database, BookOpen,
   Sparkles, Image as ImageIcon, FileText, Search, LayoutGrid,
@@ -87,14 +90,8 @@ function KBSettings({ kb, onUpdated }) {
 
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
-  const justSavedRef = useRef(false);
 
   useEffect(() => {
-    // 保存成功后跳过一次 kb 变化，避免后端返回旧数据覆盖本地乐观更新
-    if (justSavedRef.current) {
-      justSavedRef.current = false;
-      return;
-    }
     setName(kb.name || '');
     setDescription(kb.description || '');
     setType(kb.type || 'document');
@@ -115,33 +112,54 @@ function KBSettings({ kb, onUpdated }) {
     setSaving(true);
     setMessage(null);
     try {
-      const body = {
+      if (!summaryModelId) {
+        throw new Error('摘要 / 合成模型不能留空：后端把该字段定义为必填，请先选择一个模型。');
+      }
+
+      // 1) 基本信息 + 索引/Wiki 配置。
+      //    配置必须嵌套在 config 下；平铺在顶层会被后端静默忽略（曾因此丢配置）。
+      await KB.update(kb.id, buildKBUpdateBody({
         name,
         description,
-        type,
-        embedding_model_id: embeddingModelId || undefined,
-        summary_model_id: summaryModelId || undefined,
-        vlm_config: {
-          enabled: vlmEnabled,
-          model_id: vlmModelId || undefined
-        },
-        indexing_strategy: {
-          vector_enabled: vectorEnabled,
-          keyword_enabled: keywordEnabled,
-          wiki_enabled: wikiEnabled,
-          graph_enabled: graphEnabled
-        },
-        wiki_config: {
-          extraction_granularity: granularity,
-          synthesis_model_id: wikiSynthModelId || undefined
-        }
-      };
-      const res = await KB.update(kb.id, body);
-      justSavedRef.current = true;
-      // 如果后端返回了更新后的知识库，直接使用；否则用本地乐观更新
-      const updatedKb = res?.data || { ...kb, ...body };
-      setMessage({ type: 'success', text: '保存成功' });
-      onUpdated?.(updatedKb);
+        vectorEnabled,
+        keywordEnabled,
+        wikiEnabled,
+        graphEnabled,
+        granularity,
+        wikiSynthModelId,
+        hasExistingWikiConfig: Boolean(kb.wiki_config)
+      }));
+
+      // 2) 模型配置走独立端点（PUT /initialization/config/{id}）。
+      //    PUT /knowledge-bases/{id} 在设计上就不接受模型字段。
+      await KB.updateModelConfig(kb.id, buildModelConfigBody({
+        embeddingModelId,
+        summaryModelId,
+        vlmEnabled,
+        vlmModelId,
+        chunkingConfig: kb.chunking_config,
+        extractConfig: kb.extract_config
+      }));
+
+      // 3) 回读确认。这里刻意不做「乐观更新」——旧实现正是用它把「其实没保存」
+      //    显示成了「保存成功」，必须让服务端的真实状态决定提示文案。
+      const fresh = (await KB.detail(kb.id))?.data || null;
+      const missing = diffModelConfig(fresh, {
+        summaryModelId,
+        embeddingModelId,
+        vlmEnabled,
+        vlmModelId,
+        vectorEnabled,
+        keywordEnabled,
+        wikiEnabled,
+        graphEnabled,
+        hasWikiConfig: Boolean(wikiSynthModelId || kb.wiki_config),
+        wikiSynthModelId
+      });
+      setMessage(missing.length
+        ? { type: 'error', text: `服务端未接受：${missing.join('、')}。其余项目已保存。` }
+        : { type: 'success', text: '保存成功（已回读确认生效）' });
+      if (fresh) onUpdated?.(fresh);
     } catch (err) {
       setMessage({ type: 'error', text: err.message || '保存失败' });
     } finally {
