@@ -54,6 +54,9 @@ jobs:
         run: |
           node scripts/test-stream-protocol.mjs
           node scripts/test-citation-markers.mjs
+          # 锁定「知识库设置保存请求体形状」：配置必须嵌套在 config 下，
+          # 模型字段走独立端点 —— 顶层平铺会被后端静默忽略（曾导致假成功）
+          node scripts/test-kb-settings-payload.mjs
 
       - name: Build web assets
         run: |
