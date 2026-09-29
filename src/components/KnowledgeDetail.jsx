@@ -5,11 +5,12 @@ import { Knowledge } from '../api/endpoints.js';
 import { get, fetchPreview } from '../api/client.js';
 import { getBaseUrl } from '../config.js';
 import { Loader2, AlertCircle, Trash2, RefreshCw, XCircle, Save, ArrowLeft, ChevronDown, ChevronUp, FileText, Maximize2, X, Download, Activity, Ban } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import KnowledgeChunks from './KnowledgeChunks.jsx';
 import { MarkdownImage, resolveImageUrls } from './MarkdownImage.jsx';
+import { markdownUrlTransform } from '../utils/markdownUrl.js';
 import { useImageHydrate } from '../hooks/useImageHydrate.js';
 import { pushBackHandler } from '../backHandler.js';
 import { saveFile, safeFileName } from '../utils/nativeDownload.js';
@@ -18,6 +19,10 @@ import { clsx } from 'clsx';
 import {
   statusMeta, isInFlight, extractStages, spanMeta, hasRealTrace, stageLabel, formatDuration, formatBytes
 } from '../utils/parseStatus.js';
+
+// 正文里的图片走 WeKnora 内部存储协议（local://、resource:// 等），
+// react-markdown 默认清洗会把这类 src 置空导致图片不显示 —— 这里放行自有协议。
+const mdUrlTransform = (url) => markdownUrlTransform(url, defaultUrlTransform);
 
 // 预览默认展示上限（字符数）。此前 6000 对长文档仍需手动展开；提升到 30000 覆盖绝大多数文档，
 // 超过时仍显示「展开全部」。fetchPreview 侧已把读取上限从 6064 字节提升到 2MB，二者配合保证完整显示。
@@ -672,7 +677,7 @@ function KnowledgeDetail() {
                     />
                   ) : (
                     <div className="md-body max-h-96 overflow-y-auto">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={{ img: MarkdownImage }}>{displayPreview}</ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} urlTransform={mdUrlTransform} components={{ img: MarkdownImage }}>{displayPreview}</ReactMarkdown>
                     </div>
                   )}
                 </div>
@@ -739,7 +744,7 @@ function KnowledgeDetail() {
               />
             ) : (
               <div className="md-body">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={{ img: MarkdownImage }}>{preview}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} urlTransform={mdUrlTransform} components={{ img: MarkdownImage }}>{preview}</ReactMarkdown>
               </div>
             )}
           </div>

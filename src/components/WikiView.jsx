@@ -11,12 +11,17 @@ import {
   BarChart3, LayoutGrid, List, ArrowLeft, Bug, Link2
 } from 'lucide-react';
 import { clsx } from 'clsx';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
 import 'katex/dist/katex.min.css';
+import { markdownUrlTransform } from '../utils/markdownUrl.js';
+
+// wiki 正文里的图片同样是 local:// / resource:// 等内部协议，
+// 不放行会被 react-markdown 的默认清洗置空 → 图片不显示。
+const mdUrlTransform = (url) => markdownUrlTransform(url, defaultUrlTransform);
 
 const PAGE_TYPE_ORDER = ['summary', 'entity', 'concept', 'synthesis', 'comparison'];
 const PAGE_TYPE_LABELS = {
@@ -455,6 +460,7 @@ function WikiView({ kbId, initialSlug }) {
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm, remarkMath]}
                         rehypePlugins={[rehypeKatex, rehypeRaw]}
+                        urlTransform={mdUrlTransform}
                         components={{
                           img: MarkdownImage
                         }}

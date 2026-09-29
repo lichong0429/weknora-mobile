@@ -50,6 +50,7 @@ jobs:
       # 回归测试：
       #  - 流终止语义（曾用 done 判断流结束，导致问答永远收不到回答）
       #  - 引用标记解析（<kb …/> 曾是未知标签，引用既不显示也点不开）
+      #  - markdown URL 白名单（内部存储协议 local:// 被默认清洗置空 → 图片不显示）
       - name: Regression tests
         run: |
           node scripts/test-stream-protocol.mjs
@@ -57,6 +58,9 @@ jobs:
           # 锁定「知识库设置保存请求体形状」：配置必须嵌套在 config 下，
           # 模型字段走独立端点 —— 顶层平铺会被后端静默忽略（曾导致假成功）
           node scripts/test-kb-settings-payload.mjs
+          # 锁定 markdown 渲染放行 local:// / resource:// 等内部协议，
+          # 同时保证 javascript: / data: 等危险协议仍被拦
+          node scripts/test-markdown-url.mjs
 
       - name: Build web assets
         run: |

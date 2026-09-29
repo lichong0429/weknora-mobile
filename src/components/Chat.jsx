@@ -20,6 +20,11 @@ import {
   truncateMiddle, domainOf, CITE_KB_PREFIX, CITE_WEB_PREFIX, WIKI_PREFIX
 } from '../utils/citationMarkers.js';
 import { APP_VERSION } from '../utils/appVersion.js';
+import { markdownUrlTransform } from '../utils/markdownUrl.js';
+
+// 放行应用自有协议（cite:/wiki:）与 WeKnora 内部存储协议（local://、resource://…），
+// 其余仍交给 react-markdown 的默认清洗，保持对模型输出的 XSS 防护。
+const mdUrlTransform = (url) => markdownUrlTransform(url, defaultUrlTransform);
 
 function Chat() {
   const { id } = useParams();
@@ -853,12 +858,9 @@ function AssistantMarkdown({ content, references, onOpenCitation, onOpenWiki }) 
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       rehypePlugins={[rehypeRaw]}
-      // 放行自有 cite:/wiki: 协议，其余仍走默认白名单（不要整体关闭，避免给模型输出开洞）
-      urlTransform={(url) => (
-        url.startsWith(CITE_KB_PREFIX) || url.startsWith(CITE_WEB_PREFIX) || url.startsWith(WIKI_PREFIX)
-          ? url
-          : defaultUrlTransform(url)
-      )}
+      // 放行自有协议（cite:/wiki:）与 WeKnora 内部存储协议（local://、resource:// 等），
+      // 其余仍走默认白名单。此前只放行了前两种，导致回答里的图片 src 被清空、无法显示。
+      urlTransform={mdUrlTransform}
       components={components}
     >
       {text}
