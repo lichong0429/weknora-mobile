@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider 可授权路径清单（应用内更新用）。
+
+  只开放应用自己的 update 目录：
+    - external-files-path 对应 getExternalFilesDir(null)，即
+      /storage/emulated/0/Android/data/<包名>/files/
+    - files-path 对应 getFilesDir()，即 /data/data/<包名>/files/
+  两者都只用于存放下载好的更新包，不暴露应用其余文件。
+
+  与 MainActivity.updateDir() 保持一致：优先外部私有目录，退化到内部目录。
+-->
+<paths>
+    <external-files-path name="update_external" path="update/" />
+    <files-path name="update_internal" path="update/" />
+</paths>

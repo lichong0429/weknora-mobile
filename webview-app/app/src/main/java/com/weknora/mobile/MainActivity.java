@@ -9,6 +9,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.provider.Settings;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -23,6 +24,7 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.graphics.Insets;
+import androidx.core.content.FileProvider;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowCompat;
@@ -260,6 +262,81 @@ public class MainActivity extends AppCompatActivity {
                 });
             });
         }
+
+        // 供前端调用：downloadUpdate(url, fileName, requestId)。
+        //
+        // 为什么不复用上面的 download：那条在 Android 10+ 会把文件写进 MediaStore 的
+        // 「下载/WeKnora」，而系统安装器读不了 MediaStore 的 content URI。更新包必须落在
+        // 应用自己的目录里，安装时再由 FileProvider 授权出去。这里存到 <files>/update/。
+        @JavascriptInterface
+        public void downloadUpdate(String url, String fileName, String requestId) {
+            if (requestId == null || requestId.isEmpty()) return;
+            final String safeName = sanitizeFileName(fileName);
+            downloadExecutor.execute(() -> {
+                boolean ok;
+                String message;
+                try {
+                    message = performUpdateDownload(url, safeName);
+                    ok = true;
+                } catch (Exception e) {
+                    ok = false;
+                    message = e.getMessage() == null || e.getMessage().isEmpty()
+                        ? "下载失败" : e.getMessage();
+                }
+                final boolean fOk = ok;
+                final String fMessage = message;
+                runOnUiThread(() -> {
+                    if (!fOk) {
+                        Toast.makeText(MainActivity.this, "更新包下载失败：" + fMessage,
+                            Toast.LENGTH_LONG).show();
+                    }
+                    notifyUpdateResult(requestId, fOk, fMessage);
+                });
+            });
+        }
+
+        // 供前端调用：installUpdate(fileName, requestId)。
+        //
+        // Android 不允许普通应用静默安装：这里只负责把系统安装界面调起来，
+        // 最后一步「安装」必须由用户确认；Android 8+ 还需先授权「安装未知应用」，
+        // 未授权时把用户直接送到对应的设置页。
+        @JavascriptInterface
+        public void installUpdate(String fileName, String requestId) {
+            final String safeName = sanitizeFileName(fileName);
+            runOnUiThread(() -> {
+                File apk = new File(updateDir(), safeName);
+                if (!apk.exists() || apk.length() == 0) {
+                    notifyInstallResult(requestId, false, "安装包不存在，请重新下载");
+                    return;
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                        && !getPackageManager().canRequestPackageInstalls()) {
+                    notifyInstallResult(requestId, false,
+                        "请先允许本应用「安装未知应用」，授权后返回再点一次更新");
+                    try {
+                        startActivity(new Intent(
+                            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            Uri.parse("package:" + getPackageName())));
+                    } catch (Exception ignored) {
+                        // 少数定制系统没有该设置页，忽略即可（用户可去系统设置里手动开）
+                    }
+                    return;
+                }
+                try {
+                    Uri uri = FileProvider.getUriForFile(
+                        MainActivity.this, getPackageName() + ".fileprovider", apk);
+                    Intent intent = new Intent(Intent.ACTION_VIEW);
+                    intent.setDataAndType(uri, "application/vnd.android.package-archive");
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        | Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(intent);
+                    notifyInstallResult(requestId, true, "已打开安装界面");
+                } catch (Exception e) {
+                    notifyInstallResult(requestId, false,
+                        e.getMessage() == null ? "无法启动安装界面" : e.getMessage());
+                }
+            });
+        }
     }
 
     // 下载请求体：加鉴权头，POST 时写 JSON body，200 才落盘（错误响应不生成残缺文件）
@@ -412,6 +489,85 @@ public class MainActivity extends AppCompatActivity {
         String cleaned = sb.toString().trim();
         if (cleaned.isEmpty()) return "download";
         return cleaned.length() > 120 ? cleaned.substring(0, 120) : cleaned;
+    }
+
+    // 更新包目录：优先应用外部私有目录（无需任何存储权限），退化到内部目录。
+    // FileProvider 的 external-files-path / files-path 已同时覆盖这两处（见 file_paths.xml）。
+    private File updateDir() {
+        File base = getExternalFilesDir(null);
+        if (base == null) base = getFilesDir();
+        File dir = new File(base, "update");
+        if (!dir.exists()) dir.mkdirs();
+        return dir;
+    }
+
+    private static final String UPDATE_UA = "WeKnoraMobile-Android";
+
+    // 下载更新包到 updateDir()，返回绝对路径。
+    // GitHub 的 releases/download 会 302 跳到 objects.githubusercontent.com（跨主机），
+    // 因此这里**自己处理跳转**而不是依赖 setInstanceFollowRedirects，避免某些实现
+    // 因跨主机/协议差异拒绝跟随；失败时删掉半截文件，避免留下装不上的残包。
+    private String performUpdateDownload(String url, String fileName) throws IOException {
+        String current = url;
+        for (int hop = 0; hop < 6; hop++) {
+            HttpURLConnection conn = (HttpURLConnection) new URL(current).openConnection();
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(60000);
+            conn.setInstanceFollowRedirects(false);
+            conn.setRequestProperty("User-Agent", UPDATE_UA);
+            int code;
+            try {
+                code = conn.getResponseCode();
+            } catch (IOException e) {
+                conn.disconnect();
+                throw e;
+            }
+            if (code == HttpURLConnection.HTTP_MOVED_PERM || code == HttpURLConnection.HTTP_MOVED_TEMP
+                    || code == HttpURLConnection.HTTP_SEE_OTHER || code == 307 || code == 308) {
+                String location = conn.getHeaderField("Location");
+                conn.disconnect();
+                if (location == null || location.isEmpty()) throw new IOException("跳转地址缺失");
+                current = location.startsWith("http")
+                    ? location
+                    : new URL(new URL(current), location).toString();
+                continue;
+            }
+            if (code != HttpURLConnection.HTTP_OK) {
+                conn.disconnect();
+                throw new IOException("服务器返回 HTTP " + code);
+            }
+            File target = new File(updateDir(), fileName);
+            try {
+                try (InputStream in = conn.getInputStream();
+                     OutputStream out = new FileOutputStream(target)) {
+                    copy(in, out);
+                }
+            } catch (IOException e) {
+                if (target.exists() && !target.delete()) {
+                    // 删不掉也继续抛，只是下次会覆盖写
+                }
+                throw e;
+            } finally {
+                conn.disconnect();
+            }
+            if (target.length() == 0) throw new IOException("下载内容为空");
+            return target.getAbsolutePath();
+        }
+        throw new IOException("跳转次数过多，下载中止");
+    }
+
+    private void notifyUpdateResult(String requestId, boolean ok, String message) {
+        if (webView == null) return;
+        String js = "window.__weknoraUpdate && window.__weknoraUpdate("
+            + jsString(requestId) + "," + (ok ? "true" : "false") + "," + jsString(message) + ")";
+        webView.evaluateJavascript(js, null);
+    }
+
+    private void notifyInstallResult(String requestId, boolean ok, String message) {
+        if (webView == null || requestId == null || requestId.isEmpty()) return;
+        String js = "window.__weknoraInstall && window.__weknoraInstall("
+            + jsString(requestId) + "," + (ok ? "true" : "false") + "," + jsString(message) + ")";
+        webView.evaluateJavascript(js, null);
     }
 
     private void notifyDownloadResult(String requestId, boolean ok, String message) {

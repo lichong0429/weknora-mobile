@@ -61,6 +61,9 @@ jobs:
           # 锁定 markdown 渲染放行 local:// / resource:// 等内部协议，
           # 同时保证 javascript: / data: 等危险协议仍被拦
           node scripts/test-markdown-url.mjs
+          # 锁定检查更新的判定规则：版本逐段数值比较、无 APK 资产不得提示更新、
+          # 草稿/预发布不作为更新目标
+          node scripts/test-update-check.mjs
 
       - name: Build web assets
         run: |

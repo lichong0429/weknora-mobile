@@ -19,10 +19,13 @@ import VectorStoreDetail from './components/VectorStoreDetail.jsx';
 import WebSearchProviderList from './components/WebSearchProviderList.jsx';
 import WebSearchProviderDetail from './components/WebSearchProviderDetail.jsx';
 import SystemInfo from './components/SystemInfo.jsx';
+import UpdatePrompt from './components/UpdatePrompt.jsx';
 
 function App() {
   return (
     <ConfigProvider>
+      {/* 启动时检查更新：有新版才弹窗，没有则完全不渲染、不打扰 */}
+      <UpdatePrompt />
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<Home />} />
