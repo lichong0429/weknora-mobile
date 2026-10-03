@@ -134,7 +134,7 @@ function Login() {
               type="url"
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="http://192.168.1.10:8080"
+              placeholder="http://<你的服务器地址>:8080"
               autoCapitalize="none"
               autoCorrect="off"
               className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
