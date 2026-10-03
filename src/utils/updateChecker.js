@@ -113,9 +113,20 @@ export function formatBytes(bytes) {
 }
 
 // ---- 检查频率控制（避免每次冷启动都打一次 API，公开接口按 IP 限流）----
+//
+// 【v1.9.1 修正】原先只有一个 6 小时间隔，且**"无更新"也被缓存 6 小时** ——
+// 于是「21:00 打开时还没有新版本 → 21:20 发了新版 → 用户 22:00 再打开依然不检查」。
+// 用户反馈"自动检查更新没反应"，根因就是这里。
+//
+// 改为按结论分档：时效性结论（无更新）缓存短，有新版本缓存长。
 const CACHE_KEY = 'weknora_update_cache_v1';
 const SKIP_KEY = 'weknora_update_skip_v1';
-export const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 小时
+// 无更新：缓存 30 分钟。够防抖（不会每次冷启动都打 API），又不至于漏掉刚发布的版本
+export const CHECK_INTERVAL_LATEST_MS = 30 * 60 * 1000;
+// 有更新：缓存 6 小时。已提示过的东西重复弹窗是打扰
+export const CHECK_INTERVAL_UPDATE_MS = 6 * 60 * 60 * 1000;
+// 兼容旧导出（外部可能引用）
+export const CHECK_INTERVAL_MS = CHECK_INTERVAL_UPDATE_MS;
 
 export function readCache(now = Date.now()) {
   try {
@@ -123,16 +134,19 @@ export function readCache(now = Date.now()) {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return null;
-    if (!parsed.at || now - parsed.at > CHECK_INTERVAL_MS) return null;
+    if (!parsed.at) return null;
+    // 间隔由调用方按结论判断（hasUpdate 用长档，否则短档）
+    const limit = parsed.hasUpdate ? CHECK_INTERVAL_UPDATE_MS : CHECK_INTERVAL_LATEST_MS;
+    if (now - parsed.at > limit) return null;
     return parsed;
   } catch {
     return null;
   }
 }
 
-export function writeCache(release, now = Date.now()) {
+export function writeCache(release, hasUpdate = false, now = Date.now()) {
   try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify({ at: now, release }));
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ at: now, release, hasUpdate: Boolean(hasUpdate) }));
   } catch {
     // 存储不可用（隐私模式等）→ 退化为每次都查，不影响功能
   }

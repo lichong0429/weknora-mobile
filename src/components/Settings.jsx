@@ -5,6 +5,7 @@ import { useConfig } from '../contexts/ConfigContext.jsx';
 import { KB, Model } from '../api/endpoints.js';
 import { logout } from '../api/auth.js';
 import { resolveAuthMode, AUTH_MODE_ACCOUNT } from '../utils/auth.js';
+import { APP_VERSION } from '../utils/appVersion.js';
 import { AlertCircle, CheckCircle, Key, Globe, TestTube, Bug, Cpu, Database, Globe as WebSearchIcon, Activity, ChevronRight, Sun, Moon, Monitor, UserCircle, LogOut, RefreshCw } from 'lucide-react';
 
 function Settings() {
@@ -14,6 +15,37 @@ function Settings() {
   const [apiKey, setApiKey] = useState(config.apiKey || '');
   const [testStatus, setTestStatus] = useState(null);
   const [testing, setTesting] = useState(false);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updateMsg, setUpdateMsg] = useState(null);
+
+  // 复用 UpdatePrompt 挂在 window 上的检查函数（force=true 跳过缓存）。
+  // 启动时的自动检查是静默的，这里必须给出确定结果 —— 否则用户无法分辨
+  // 「没有新版本」和「检查功能坏了」。
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true);
+    setUpdateMsg(null);
+    try {
+      const fn = window.__weknoraCheckUpdate;
+      if (typeof fn !== 'function') {
+        setUpdateMsg({ type: 'error', text: '检查功能尚未就绪，请完全退出 App 后重试' });
+        return;
+      }
+      const r = await fn(true);
+      if (r?.status === 'update') {
+        setUpdateMsg({ type: 'success', text: `发现新版本 ${r.release?.tag || ''}，请在启动提示或 Release 页面下载` });
+      } else if (r?.status === 'latest') {
+        setUpdateMsg({ type: 'success', text: `已是最新版本（v${APP_VERSION}）` });
+      } else if (r?.status === 'error' && r.reason === 'no-release') {
+        setUpdateMsg({ type: 'warn', text: '未取到发布信息：GitHub 匿名接口可能限流，请稍后再试' });
+      } else {
+        setUpdateMsg({ type: 'error', text: `检查失败（${r?.reason || '未知原因'}）：请确认能访问 api.github.com` });
+      }
+    } catch (err) {
+      setUpdateMsg({ type: 'error', text: err.message || '检查失败' });
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
 
   const isAccount = resolveAuthMode(config) === AUTH_MODE_ACCOUNT;
 
@@ -176,6 +208,36 @@ function Settings() {
       >
         <Bug className="h-4 w-4" /> 诊断与调试
       </button>
+
+      {/* 手动检查更新：启动时的自动检查是静默的（失败只在顶部提示条里），
+          这里给一个确定性的入口 —— 「到底能不能检查到更新」不该要靠猜 */}
+      <div className="mt-4 rounded-2xl bg-white p-4 shadow-sm">
+        <h3 className="mb-2 font-semibold text-gray-900">应用更新</h3>
+        <p className="mb-3 text-xs text-gray-500">
+          当前版本 v{APP_VERSION} · 启动时会自动检查；此处可随时手动触发
+        </p>
+        <button
+          onClick={handleCheckUpdate}
+          disabled={checkingUpdate}
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        >
+          {checkingUpdate ? <RefreshCw className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          {checkingUpdate ? '检查中…' : '检查更新'}
+        </button>
+        {updateMsg && (
+          <div
+            className={clsx(
+              'mt-3 flex items-start gap-2 rounded-xl px-3 py-2 text-sm',
+              updateMsg.type === 'success' ? 'bg-green-50 text-green-700'
+                : updateMsg.type === 'warn' ? 'bg-amber-50 text-amber-800' : 'bg-red-50 text-red-700'
+            )}
+          >
+            {updateMsg.type === 'success' ? <CheckCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />}
+            <span className="break-words">{updateMsg.text}</span>
+          </div>
+        )}
+      </div>
 
       <div className="mt-4 rounded-2xl bg-white p-4 shadow-sm">
         <h3 className="mb-3 font-semibold text-gray-900">外观</h3>

@@ -9,7 +9,8 @@
  */
 import {
   parseVersion, compareVersions, isNewerVersion, pickApkAsset,
-  normalizeRelease, evaluateUpdate, releaseNotesPreview, formatBytes
+  normalizeRelease, evaluateUpdate, releaseNotesPreview, formatBytes,
+  readCache, writeCache
 } from '../src/utils/updateChecker.js';
 
 let pass = 0;
@@ -113,6 +114,53 @@ check('MB', formatBytes(5934708), '5.66 MB');
 check('KB', formatBytes(2048), '2 KB');
 check('0 返回空串', formatBytes(0), '');
 check('负数返回空串', formatBytes(-5), '');
+
+// ---------------- 8) 缓存分档（v1.9.1 修复的核心）----------------
+//
+// 背景：用户反馈「自动检查更新没反应」。根因是「无更新」也被缓存 6 小时——
+// 21:00 打开时无更新 → 21:20 发布新版 → 22:00 再打开仍命中旧缓存不请求。
+// 这组用例把该场景钉死，并确认「有更新」仍走长档（避免反复弹窗打扰）。
+console.log('\n--- 缓存分档 ---');
+{
+  // 极简 localStorage 替身
+  const store = new Map();
+  globalThis.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k)
+  };
+
+  const rel = { tag_name: 'v1.9.0', version: '1.9.0', assets: [{ name: 'a.apk', browser_download_url: 'https://x/a.apk', size: 100 }] };
+
+  // 场景 A：无更新 → 短档（30 分钟）
+  writeCache(rel, false, 1000_000);
+  checkTrue('A 无更新：30 分钟后缓存过期（必须重新查）', readCache(1000_000 + 31 * 60 * 1000) === null);
+  checkTrue('A 无更新：20 分钟时缓存仍有效（防抖）', readCache(1000_000 + 20 * 60 * 1000) !== null);
+
+  // 场景 B：有更新 → 长档（6 小时）
+  writeCache(rel, true, 2000_000);
+  checkTrue('B 有更新：5 小时后仍有效（不重复弹窗）', readCache(2000_000 + 5 * 3600 * 1000) !== null);
+  checkTrue('B 有更新：7 小时后过期', readCache(2000_000 + 7 * 3600 * 1000) === null);
+
+  // 关键回归：用户报的原场景
+  // 21:00 查得「无更新」并缓存 → 21:20 发布 v1.9.0 → 22:00 打开
+  writeCache(rel, false, 21 * 3600_000);
+  checkTrue(
+    'C 回归：1 小时后（新版已发布）缓存必须已失效，否则用户看不到更新',
+    readCache(22 * 3600_000) === null
+  );
+
+  // 旧格式缓存（无 hasUpdate 字段）应按短档处理并可正常读取
+  store.set('weknora_update_cache_v1', JSON.stringify({ at: 3000_000, release: rel }));
+  checkTrue('D 旧格式缓存仍可读', readCache(3000_000 + 60_000) !== null);
+  checkTrue('D 旧格式缓存按短档过期', readCache(3000_000 + 31 * 60 * 1000) === null);
+
+  // 损坏数据
+  store.set('weknora_update_cache_v1', 'not-json');
+  checkTrue('E 损坏缓存返回 null', readCache(3000_000) === null);
+  store.set('weknora_update_cache_v1', JSON.stringify({ release: rel }));
+  checkTrue('E 缺 at 字段返回 null', readCache(3000_000) === null);
+}
 
 console.log();
 if (failures.length) {
