@@ -61,6 +61,30 @@ export function ConfigProvider({ children }) {
     setConfigState(getConfig());
   }, []);
 
+  // 监听 config.js 的写操作。
+  //
+  // 【v1.9.2 修正】api/auth.js（登录成功、写 token、退出登录）为了在非 React 环境
+  // 也能用，直接调 config.js 的 setConfig —— 那只写 localStorage，不通知 React。
+  // 结果：登录成功后界面毫无变化、RequireAuth 守卫也读不到新状态，
+  // 表现为「点了登录没反应、设置里还显示 API Key 登录」。
+  // 这里订阅事件把外部写入同步进 Context，打通两条路径。
+  useEffect(() => {
+    const onChange = (e) => {
+      setConfigState(e.detail || getConfig());
+    };
+    window.addEventListener('weknora-config-changed', onChange);
+    return () => window.removeEventListener('weknora-config-changed', onChange);
+  }, []);
+
+  // 多标签页/多 WebView 实例共享 localStorage 时也应同步
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key === 'weknora-mobile-config') setConfigState(getConfig());
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
   // 应用初始主题 + 跟随系统主题变化（仅当 theme === 'system' 时联动）
   useEffect(() => {
     applyThemeClass(theme);

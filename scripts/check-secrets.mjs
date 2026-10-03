@@ -94,7 +94,8 @@ const RULES = [
       const src = String(hit.lineText || '').trim();
       if (/^export\s+const\s+[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PWD)[A-Z0-9_]*\s*=/.test(src)) return true;
       const v = /["']([^"']+)["']/.exec(src);
-      if (v && /^(?:sk|test|dummy|example|placeholder)[-_]/i.test(v[1])) return true;
+      // 明显是探针/占位的值：__probe__ / sk-xxx / test-… 等
+      if (v && /^(?:__\w+__|(?:sk|test|dummy|example|placeholder|probe)[-_])/i.test(v[1])) return true;
       return false;
     }
   },
