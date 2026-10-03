@@ -3,7 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { useConfig } from '../contexts/ConfigContext.jsx';
 import { KB, Model } from '../api/endpoints.js';
-import { AlertCircle, CheckCircle, Key, Globe, TestTube, Bug, Cpu, Database, Globe as WebSearchIcon, Activity, ChevronRight, Sun, Moon, Monitor } from 'lucide-react';
+import { logout } from '../api/auth.js';
+import { resolveAuthMode, AUTH_MODE_ACCOUNT } from '../utils/auth.js';
+import { AlertCircle, CheckCircle, Key, Globe, TestTube, Bug, Cpu, Database, Globe as WebSearchIcon, Activity, ChevronRight, Sun, Moon, Monitor, UserCircle, LogOut, RefreshCw } from 'lucide-react';
 
 function Settings() {
   const navigate = useNavigate();
@@ -12,6 +14,8 @@ function Settings() {
   const [apiKey, setApiKey] = useState(config.apiKey || '');
   const [testStatus, setTestStatus] = useState(null);
   const [testing, setTesting] = useState(false);
+
+  const isAccount = resolveAuthMode(config) === AUTH_MODE_ACCOUNT;
 
   const handleSave = () => {
     setConfig({ baseUrl, apiKey });
@@ -43,6 +47,57 @@ function Settings() {
     <div className="p-4">
       <h2 className="mb-4 text-xl font-bold text-gray-900">设置</h2>
 
+      {/* 当前登录身份：一眼看出用的是哪种方式、是谁 */}
+      <div className="mb-4 rounded-2xl bg-white p-4 shadow-sm">
+        <h3 className="mb-3 flex items-center gap-2 font-semibold text-gray-900">
+          <UserCircle className="h-5 w-5 text-brand-500" /> 登录状态
+        </h3>
+        {isAccount ? (
+          <div className="space-y-3">
+            <div className="rounded-xl bg-brand-50 p-3">
+              <p className="text-sm font-medium text-brand-800">
+                {config.authUser?.username || config.authEmail || '已登录'}
+              </p>
+              {config.authUser?.email && (
+                <p className="mt-0.5 text-xs text-brand-600">{config.authUser.email}</p>
+              )}
+              {config.authTenantName && (
+                <p className="mt-0.5 text-xs text-brand-600">空间：{config.authTenantName}</p>
+              )}
+              <p className="mt-1.5 text-xs text-brand-500">使用账号密码登录（访问令牌会自动续期）</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => navigate('/login')}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                <RefreshCw className="h-4 w-4" /> 切换账号
+              </button>
+              <button
+                onClick={() => { logout(); navigate('/login', { replace: true }); }}
+                className="flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-3 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50"
+              >
+                <LogOut className="h-4 w-4" /> 退出
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-xl bg-gray-50 p-3">
+            <p className="text-sm font-medium text-gray-800">使用 API Key 登录</p>
+            <p className="mt-0.5 text-xs text-gray-500">
+              {apiKey ? '已配置' : '未配置'}
+              {config.apiKey ? `（${config.apiKey.slice(0, 4)}****${config.apiKey.slice(-4)}）` : ''}
+            </p>
+            <button
+              onClick={() => navigate('/login')}
+              className="mt-3 w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              改用账号密码登录 / 更换 Key
+            </button>
+          </div>
+        )}
+      </div>
+
       <div className="space-y-4 rounded-2xl bg-white p-4 shadow-sm">
         <div>
           <label className="mb-1 flex items-center gap-2 text-sm font-medium text-gray-700">
@@ -69,7 +124,10 @@ function Settings() {
             placeholder="sk-..."
             className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
-          <p className="mt-1 text-xs text-gray-500">在 WeKnora 账户信息页面获取</p>
+          <p className="mt-1 text-xs text-gray-500">
+            在 WeKnora 账户信息页面获取
+            {isAccount && '（仅在切换到 API Key 方式时生效）'}
+          </p>
         </div>
 
         {testStatus && (

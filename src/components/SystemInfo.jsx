@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAsync } from '../hooks/useApi.js';
 import { System as SystemAPI } from '../api/endpoints.js';
 import { useConfig } from '../contexts/ConfigContext.jsx';
+import { authFingerprint } from '../utils/auth.js';
 import {
   Loader2, AlertCircle, RefreshCw, Server, HardDrive, FileText,
   CheckCircle, XCircle, Activity, Info, ChevronDown, ChevronUp,
@@ -76,9 +77,12 @@ function normalizeEngine(item) {
 
 function SystemInfo() {
   const { config } = useConfig();
-  const { data: info, loading: infoLoading, error: infoError, run: runInfo } = useAsync(() => SystemAPI.info(), [config.baseUrl, config.apiKey]);
-  const { data: parsers, loading: parserLoading, error: parserError, run: runParser } = useAsync(() => SystemAPI.parserEngines(), [config.baseUrl, config.apiKey]);
-  const { data: storage, loading: storageLoading, error: storageError, run: runStorage } = useAsync(() => SystemAPI.storageEngineStatus(), [config.baseUrl, config.apiKey]);
+  // 鉴权指纹：账号模式换的是 token 而非 apiKey，依赖数组必须跟着它变
+  // （原来写死 config.apiKey，导致登录成功后页面不重新取数）
+  const authFp = authFingerprint(config);
+  const { data: info, loading: infoLoading, error: infoError, run: runInfo } = useAsync(() => SystemAPI.info(), [config.baseUrl, authFp]);
+  const { data: parsers, loading: parserLoading, error: parserError, run: runParser } = useAsync(() => SystemAPI.parserEngines(), [config.baseUrl, authFp]);
+  const { data: storage, loading: storageLoading, error: storageError, run: runStorage } = useAsync(() => SystemAPI.storageEngineStatus(), [config.baseUrl, authFp]);
 
   const [checking, setChecking] = useState({});
   const [checkResults, setCheckResults] = useState({});

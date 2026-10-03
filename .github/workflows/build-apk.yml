@@ -64,6 +64,10 @@ jobs:
           # 锁定检查更新的判定规则：版本逐段数值比较、无 APK 资产不得提示更新、
           # 草稿/预发布不作为更新目标
           node scripts/test-update-check.mjs
+          # 锁定认证：两种凭据互斥（绝不同发 X-API-Key 与 Authorization）、
+          # 账号模式下无 token 不得静默回退到 API Key、JWT 过期判断、
+          # 登录响应对 token / access_token 两种字段名的兼容
+          node scripts/test-auth.mjs
 
       - name: Build web assets
         run: |

@@ -21,3 +21,8 @@ export function getApiKey() {
   const cfg = getConfig();
   return cfg.apiKey || '';
 }
+
+export function getAuthToken() {
+  const cfg = getConfig();
+  return cfg.authToken || '';
+}

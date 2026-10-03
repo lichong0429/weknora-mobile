@@ -2,6 +2,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { useAsync } from '../hooks/useApi.js';
 import { useConfig } from '../contexts/ConfigContext.jsx';
+import { authFingerprint } from '../utils/auth.js';
 import { KB, Session } from '../api/endpoints.js';
 import { extractList } from '../utils/list.js';
 import {
@@ -47,15 +48,18 @@ function Home() {
   const navigate = useNavigate();
   const location = useLocation();
   const { config } = useConfig();
+  // 鉴权指纹：账号模式换的是 token 而非 apiKey，依赖数组必须跟着它变
+  // （原来写死 config.apiKey，导致登录成功后页面不重新取数）
+  const authFp = authFingerprint(config);
 
   // 依赖 location.key：每次进入首页都重新拉取，保证概览数据新鲜
   const { data: kbRes, loading: kbLoading, error: kbError, run: runKb } = useAsync(
     () => KB.list(),
-    [location.key, config.baseUrl, config.apiKey]
+    [location.key, config.baseUrl, authFp]
   );
   const { data: sessionRes, run: runSessions } = useAsync(
     () => Session.list({ page: 1, page_size: 100 }),
-    [location.key, config.baseUrl, config.apiKey]
+    [location.key, config.baseUrl, authFp]
   );
 
   const kbs = extractList(kbRes);

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { getLogs, clearLogs } from '../api/debug.js';
 import { getConfig } from '../config.js';
+import { resolveAuthMode, AUTH_MODE_ACCOUNT } from '../utils/auth.js';
 import { chatStream } from '../api/client.js';
 import { KB, Model, VectorStore, WebSearch, Agent, Session, Tenant } from '../api/endpoints.js';
 import { diagnoseNoAnswer, formatDiagnosisReport } from '../utils/chatDiagnosis.js';
@@ -189,9 +190,14 @@ function Diagnostics() {
   const refresh = () => {
     setLogs(getLogs());
     const cfg = getConfig();
+    // 账号模式下绝不能展示 JWT 原文，只报「已配置」
+    const mode = resolveAuthMode(cfg);
     setConfigView({
       baseUrl: cfg.baseUrl || 'http://localhost:8080',
-      apiKey: cfg.apiKey ? `${cfg.apiKey.slice(0, 4)}****${cfg.apiKey.slice(-4)}` : '未设置'
+      authMode: mode === AUTH_MODE_ACCOUNT ? '账号密码（Bearer JWT）' : 'API Key（X-API-Key）',
+      apiKey: mode === AUTH_MODE_ACCOUNT
+        ? (cfg.authToken ? '已配置（令牌不显示）' : '未设置')
+        : (cfg.apiKey ? `${cfg.apiKey.slice(0, 4)}****${cfg.apiKey.slice(-4)}` : '未设置')
     });
   };
 
@@ -274,7 +280,8 @@ function Diagnostics() {
           <h3 className="mb-2 font-semibold text-gray-900">当前配置</h3>
           <div className="space-y-1 text-sm text-gray-700">
             <p><span className="font-medium">地址：</span>{configView.baseUrl}</p>
-            <p><span className="font-medium">API Key：</span>{configView.apiKey}</p>
+            <p><span className="font-medium">认证方式：</span>{configView.authMode}</p>
+            <p><span className="font-medium">凭据：</span>{configView.apiKey}</p>
           </div>
           <p className="mt-2 text-xs text-gray-500">
             提示：地址只需填写到端口，例如 http://localhost:8080，不要加 /api/v1。

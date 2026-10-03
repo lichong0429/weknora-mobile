@@ -236,16 +236,23 @@ public class MainActivity extends AppCompatActivity {
         // <a download>，前端「fetch → blob → 下载」在 App 内必然失败。这里由原生
         // 直接发起请求并**流式写盘**，避免把整个 ZIP 读进内存（后端批量下载上限 512 MiB）。
         // 完成后通过 evaluateJavascript 回调 window.__weknoraDownload 通知前端。
+        //
+        // authHeaderName/authHeaderValue 取代原先写死的 apiKey：服务端现在同时支持
+        // API Key（X-API-Key）与账号登录（Authorization: Bearer <JWT>），
+        // 由前端按当前认证方式决定传哪个。两者互斥 —— 同时发送会让服务端按
+        // API-key principal 鉴权，账号模式下表现为「登录成功却下载 401」。
         @JavascriptInterface
         public void download(String method, String url, String bodyJson,
-                             String fileName, String apiKey, String requestId) {
+                             String fileName, String authHeaderName, String authHeaderValue,
+                             String requestId) {
             if (requestId == null || requestId.isEmpty()) return;
             final String safeName = sanitizeFileName(fileName);
             downloadExecutor.execute(() -> {
                 boolean ok;
                 String message;
                 try {
-                    message = performDownload(method, url, bodyJson, safeName, apiKey);
+                    message = performDownload(method, url, bodyJson, safeName,
+                        authHeaderName, authHeaderValue);
                     ok = true;
                 } catch (Exception e) {
                     ok = false;
@@ -341,7 +348,8 @@ public class MainActivity extends AppCompatActivity {
 
     // 下载请求体：加鉴权头，POST 时写 JSON body，200 才落盘（错误响应不生成残缺文件）
     private String performDownload(String method, String url, String bodyJson,
-                                   String fileName, String apiKey) throws IOException {
+                                   String fileName, String authHeaderName,
+                                   String authHeaderValue) throws IOException {
         HttpURLConnection conn = null;
         try {
             conn = (HttpURLConnection) new URL(url).openConnection();
@@ -349,7 +357,12 @@ public class MainActivity extends AppCompatActivity {
             conn.setConnectTimeout(20000);
             conn.setReadTimeout(120000);
             conn.setInstanceFollowRedirects(true);
-            conn.setRequestProperty("X-API-Key", apiKey == null ? "" : apiKey);
+            // 只设置前端实际给出的那一个鉴权头（空名或空值都不设）——
+            // 同时发送 X-API-Key 与 Authorization 会让服务端按 API-key principal 鉴权
+            if (authHeaderName != null && !authHeaderName.isEmpty()
+                    && authHeaderValue != null && !authHeaderValue.isEmpty()) {
+                conn.setRequestProperty(authHeaderName, authHeaderValue);
+            }
             conn.setRequestProperty("Accept", "*/*");
 
             if (bodyJson != null && !bodyJson.isEmpty()) {

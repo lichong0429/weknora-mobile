@@ -1,5 +1,6 @@
 import { buildApiUrl, downloadAsBlob } from '../api/client.js';
-import { getApiKey } from '../config.js';
+import { getConfig } from '../config.js';
+import { buildAuthHeaders } from './auth.js';
 
 // 统一的文件下载入口。
 //
@@ -46,12 +47,19 @@ function nativeDownload({ path, method = 'GET', body = null, fileName }) {
     pending[requestId] = { resolve, reject, timer, fileName };
 
     try {
+      // 原生桥只能设置一个自定义鉴权头，这里按当前认证方式挑出那一个传过去。
+      // 不能两个都传：服务端会把 API Key 当成独立的授权主体（API-key principal），
+      // 账号登录的请求会因此被按 API Key 鉴权而 401。
+      const { headers } = buildAuthHeaders(getConfig());
+      const headerName = Object.keys(headers)[0] || '';
+      const headerValue = headerName ? headers[headerName] : '';
       window.WeKnoraBridge.download(
         method,
         buildApiUrl(path),
         body ? JSON.stringify(body) : '',
         fileName || 'download',
-        getApiKey(),
+        headerName,
+        headerValue,
         requestId
       );
     } catch (err) {

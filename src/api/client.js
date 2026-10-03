@@ -1,12 +1,14 @@
-import { getApiKey, getBaseUrl } from '../config.js';
+import { getBaseUrl, getConfig } from '../config.js';
 import { logRequest, logResponse } from './debug.js';
+import { buildAuthHeaders, resolveAuthMode, AUTH_MODE_ACCOUNT } from '../utils/auth.js';
+import { refreshToken } from './auth.js';
 
 // preview 读取策略：文本类读取完整内容（上限 2MB，覆盖绝大多数文档），
 // 避免 6064 字节时代码把长文档截断成 ~4500 字符（曾导致"预览显示不完整、网页端正常"的反馈）
 const PREVIEW_TEXT_LEN = 2 * 1024 * 1024; // 2MB
 
-function buildUrl(path) {
-  const base = getBaseUrl()
+export function buildUrl(path, overrideBase) {
+  const base = (overrideBase || getBaseUrl())
     .replace(/\/api\/v1\/?$/, '')
     .replace(/\/api\/?$/, '')
     .replace(/\/$/, '');
@@ -14,13 +16,57 @@ function buildUrl(path) {
   return apiBase + (path.startsWith('/') ? path : `/${path}`);
 }
 
-function getHeaders(isJson = true) {
-  const headers = {
-    Accept: 'application/json',
-    'X-API-Key': getApiKey()
-  };
-  if (isJson) headers['Content-Type'] = 'application/json';
-  return headers;
+// 鉴权头统一由 utils/auth.js 构造：账号模式发 Authorization，API Key 模式发 X-API-Key，
+// **两者互斥**。混发时服务端会按 API-key principal 走白名单鉴权，
+// 表现为「明明登录成功却到处 401」，且极难定位。
+function getHeaders(isJson = true, extra = {}) {
+  const { headers } = buildAuthHeaders(getConfig());
+  const out = { ...headers, ...extra, Accept: 'application/json' };
+  if (isJson) out['Content-Type'] = 'application/json';
+  return out;
+}
+
+// 登录态失效时的回调（由 App 层接到「跳登录页」）
+let unauthorizedHandler = null;
+export function onUnauthorized(handler) {
+  unauthorizedHandler = handler;
+}
+
+// 401 自动刷新：账号模式下 access token 会过期，用 refresh token 静默换新后重发一次。
+// 并发请求共用同一次刷新 —— 后端会轮换 refresh token，
+// 并发刷新会让先发出的那次拿到已失效的 token 而莫名失败。
+let refreshInFlight = null;
+async function tryRefresh() {
+  if (resolveAuthMode(getConfig()) !== AUTH_MODE_ACCOUNT) return false;
+  if (!refreshInFlight) {
+    refreshInFlight = refreshToken().finally(() => { refreshInFlight = null; });
+  }
+  const ok = await refreshInFlight;
+  if (!ok) {
+    // 刷新失败 = 登录态确已失效，通知外层跳登录页
+    try { unauthorizedHandler?.(); } catch {}
+  }
+  return ok === true;
+}
+
+// 遇到 401 时：尝试刷新，成功则用新凭据重发一次；返回最终响应（或 null 表示放弃）。
+// 注意重发最多一次 —— 刷新后仍 401 说明凭据真的失效了，不能无限循环。
+async function resendOn401(res, resend) {
+  if (res.status !== 401) return res;
+  const ok = await tryRefresh();
+  if (!ok) return res;
+  return resend();
+}
+
+// 诊断日志要能看到「用的是哪种鉴权」，但绝不能留下凭据原文
+function maskAuthHeaders(headers) {
+  const out = {};
+  for (const [k, v] of Object.entries(headers || {})) {
+    if (k === 'X-API-Key') out[k] = v ? '***' : '';
+    else if (k === 'Authorization') out[k] = v ? 'Bearer ***' : '';
+    else out[k] = v;
+  }
+  return out;
 }
 
 async function handleResponse(res) {
@@ -51,16 +97,21 @@ export async function request(method, path, body = null, signal = null) {
   const headers = getHeaders(isJson);
   const reqEntry = logRequest({ method, url, headers, body: isJson ? body : '[FormData/Binary]' });
 
-  try {
+  const send = async () => {
     const res = await fetch(url, {
       method,
-      headers,
+      headers: getHeaders(isJson),
       body: isJson ? JSON.stringify(body) : body,
       signal
     });
-    const logBody = await res.clone().text().catch(() => '');
-    logResponse({ id: reqEntry.id, status: res.status, statusText: res.statusText, body: logBody });
-    return handleResponse(res);
+    logResponse({ id: reqEntry.id, status: res.status, statusText: res.statusText, body: await res.clone().text().catch(() => '') });
+    return res;
+  };
+
+  try {
+    // 401 → 刷新 token 后重发一次（仅账号模式），拿到最终响应再解析
+    const finalRes = await resendOn401(await send(), send);
+    return await handleResponse(finalRes);
   } catch (err) {
     logResponse({ id: reqEntry.id, status: 0, statusText: err.name, error: err.message || String(err) });
     throw err;
@@ -72,14 +123,16 @@ export async function get(path, params = {}) {
   Object.entries(params).forEach(([k, v]) => {
     if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
   });
-  const headers = getHeaders(false);
-  const reqEntry = logRequest({ method: 'GET', url: url.toString(), headers, body: params });
+  const reqEntry = logRequest({ method: 'GET', url: url.toString(), headers: getHeaders(false), body: params });
+
+  const send = async () => {
+    const res = await fetch(url.toString(), { headers: getHeaders(false) });
+    logResponse({ id: reqEntry.id, status: res.status, statusText: res.statusText, body: await res.clone().text().catch(() => '') });
+    return res;
+  };
 
   try {
-    const res = await fetch(url.toString(), { headers });
-    const logBody = await res.clone().text().catch(() => '');
-    logResponse({ id: reqEntry.id, status: res.status, statusText: res.statusText, body: logBody });
-    return handleResponse(res);
+    return await handleResponse(await resendOn401(await send(), send));
   } catch (err) {
     logResponse({ id: reqEntry.id, status: 0, statusText: err.name, error: err.message || String(err) });
     throw err;
@@ -91,13 +144,16 @@ export async function getText(path, params = {}) {
   Object.entries(params).forEach(([k, v]) => {
     if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, v);
   });
-  const headers = { ...getHeaders(false), Accept: 'text/plain,*/*' };
-  const reqEntry = logRequest({ method: 'GET', url: url.toString(), headers, body: params });
+  const reqEntry = logRequest({ method: 'GET', url: url.toString(), headers: getHeaders(false), body: params });
+
+  const send = async () => {
+    const res = await fetch(url.toString(), { headers: { ...getHeaders(false), Accept: 'text/plain,*/*' } });
+    logResponse({ id: reqEntry.id, status: res.status, statusText: res.statusText, body: await res.clone().text().catch(() => '') });
+    return res;
+  };
 
   try {
-    const res = await fetch(url.toString(), { headers });
-    const logBody = await res.clone().text().catch(() => '');
-    logResponse({ id: reqEntry.id, status: res.status, statusText: res.statusText, body: logBody });
+    const res = await resendOn401(await send(), send);
     if (!res.ok) {
       let msg = `HTTP ${res.status}`;
       try { const body = await res.json(); msg = body.error?.message || body.message || msg; } catch {}
@@ -306,7 +362,9 @@ export function uploadFileWithProgress(kbId, file, { fileName, tagId, channel, o
 
     const url = buildUrl(`/knowledge-bases/${kbId}/knowledge/file`);
     const xhr = new XMLHttpRequest();
-    const reqEntry = logRequest({ method: 'POST', url, headers: { 'X-API-Key': '***' }, body: '[FormData]' });
+    // 鉴权头与其它请求走同一套构造（账号模式 → Authorization）
+    const authHeaders = getHeaders(false);
+    const reqEntry = logRequest({ method: 'POST', url, headers: maskAuthHeaders(authHeaders), body: '[FormData]' });
 
     let aborted = false;
     const onAbort = () => {
@@ -318,8 +376,9 @@ export function uploadFileWithProgress(kbId, file, { fileName, tagId, channel, o
     const cleanup = () => signal?.removeEventListener('abort', onAbort);
 
     xhr.open('POST', url, true);
-    xhr.setRequestHeader('Accept', 'application/json');
-    xhr.setRequestHeader('X-API-Key', getApiKey());
+    Object.entries(authHeaders).forEach(([k, v]) => {
+      try { xhr.setRequestHeader(k, v); } catch {}
+    });
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) onProgress(e.loaded, e.total);
@@ -451,15 +510,19 @@ export async function* chatStream(sessionId, payload, { type = 'knowledge', sign
   };
 
   // Accept 用 text/event-stream：这是 SSE 的正确内容协商，经反向代理时更不易被改写
-  const headers = { ...getHeaders(true), Accept: 'text/event-stream' };
-  logRequest({ method: 'POST', url, headers, body: payload });
+  logRequest({ method: 'POST', url, headers: getHeaders(true), body: payload });
 
-  const res = await fetch(url, {
+  // 头必须在**每次实际发起请求时**读取：账号模式下 token 可能刚被刷新过，
+  // 提前算好会把旧 token 发出去（流式请求是重灾区 —— 打开对话时 token 常已过期）
+  const openStream = () => fetch(url, {
     method: 'POST',
-    headers,
+    headers: { ...getHeaders(true), Accept: 'text/event-stream' },
     body: JSON.stringify(payload),
     signal
   });
+
+  // 尚未流出任何内容时可以安全重发一次（流一旦开始就不能重放）
+  const res = await resendOn401(await openStream(), openStream);
   report({
     status: res.status,
     contentType: res.headers.get('content-type') || '',

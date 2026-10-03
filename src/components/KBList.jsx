@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
 import { useConfig } from '../contexts/ConfigContext.jsx';
+import { authFingerprint } from '../utils/auth.js';
 import { KB } from '../api/endpoints.js';
 import { extractList } from '../utils/list.js';
 import { Plus, Database, Pin, ChevronRight, Loader2, AlertCircle, X, Wrench, RefreshCw, Copy } from 'lucide-react';
@@ -12,6 +13,9 @@ function KBList() {
   const navigate = useNavigate();
   const location = useLocation();
   const { config } = useConfig();
+  // 鉴权指纹：账号模式换的是 token 而非 apiKey，依赖数组必须跟着它变
+  // （原来写死 config.apiKey，导致登录成功后页面不重新取数）
+  const authFp = authFingerprint(config);
   const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -20,7 +24,7 @@ function KBList() {
   // 依赖 location.key：每次进入本页重新拉取，避免始终显示旧数据
   const { data, loading, error, run, setData } = useAsync(
     () => KB.list(),
-    [location.key, config.baseUrl, config.apiKey]
+    [location.key, config.baseUrl, authFp]
   );
 
   const kbs = extractList(data);

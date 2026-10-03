@@ -11,6 +11,8 @@
 //   events 客户端侧统计（各 response_type 计数、finish_reason、error 内容、是否收到 complete）
 // 输出：
 //   { level: 'auth'|'network'|'stream'|'backend'|'empty'|'none', verdict, detail[], action }
+import { getConfig } from '../config.js';
+import { resolveAuthMode, AUTH_MODE_ACCOUNT } from './auth.js';
 
 const TYPE_LABELS = {
   answer: '回答内容',
@@ -70,13 +72,20 @@ export function diagnoseNoAnswer(diag = {}, events = {}) {
     };
   }
 
-  // 2) 鉴权失败：Key 无效、或该 Key 缺少问答能力（后端对 /knowledge-chat 要求 chat 权限）
+  // 2) 鉴权失败：凭据无效、或缺少问答能力（后端对 /knowledge-chat 要求 chat 权限）
   if (status === 401 || status === 403) {
+    // 账号模式与 API Key 模式的成因完全不同，混着说会把账号用户引到「更新 API Key」这个
+    // 他根本没有、也不该去改的地方
+    const accountMode = resolveAuthMode(getConfig()) === AUTH_MODE_ACCOUNT;
     return {
       ...done,
       level: 'auth',
-      verdict: `鉴权失败（HTTP ${status}）。API Key 无效，或该 Key 没有问答权限。`,
-      action: '到设置页更新 API Key；若 Key 是「知识库受限」类型，需要换成有问答权限的 Key。'
+      verdict: accountMode
+        ? `鉴权失败（HTTP ${status}）。登录已失效或该账号没有问答权限。`
+        : `鉴权失败（HTTP ${status}）。API Key 无效，或该 Key 没有问答权限。`,
+      action: accountMode
+        ? '到设置页「登录状态」重新登录；若确认账号有权限，检查服务端是否开启了注册/登录限制。'
+        : '到设置页更新 API Key；若 Key 是「知识库受限」类型，需要换成有问答权限的 Key。'
     };
   }
 
