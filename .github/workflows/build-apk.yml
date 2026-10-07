@@ -68,6 +68,10 @@ jobs:
           # 账号模式下无 token 不得静默回退到 API Key、JWT 过期判断、
           # 登录响应对 token / access_token 两种字段名的兼容
           node scripts/test-auth.mjs
+          # 锁定图谱解析：/wiki/graph 返回的是**顶层** {nodes,edges,meta}，
+          # 没有 data 包裹层 —— 曾误读 data.data 导致图谱永远显示为空
+          # （服务端实有 311 节点/1003 边，客服反馈"实际上有但不显示"）
+          node scripts/test-graph-data.mjs
 
       - name: Build web assets
         run: |

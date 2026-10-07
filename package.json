@@ -1,7 +1,7 @@
 {
   "name": "weknora-mobile",
   "private": true,
-  "version": "1.9.2",
+  "version": "1.9.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,13 +11,15 @@
     "check:secrets": "node scripts/check-secrets.mjs",
     "check:hooks": "python scripts/check-hooks-order.py",
     "check:secrets:self-test": "node scripts/check-secrets.mjs --self-test",
-    "check": "node scripts/check-secrets.mjs && node scripts/test-stream-protocol.mjs && node scripts/test-citation-markers.mjs && node scripts/test-kb-settings-payload.mjs && node scripts/test-markdown-url.mjs && node scripts/test-update-check.mjs && node scripts/test-auth.mjs && python scripts/check-hooks-order.py",
+    "check": "node scripts/check-secrets.mjs && node scripts/test-stream-protocol.mjs && node scripts/test-citation-markers.mjs && node scripts/test-kb-settings-payload.mjs && node scripts/test-markdown-url.mjs && node scripts/test-update-check.mjs && node scripts/test-auth.mjs && node scripts/test-graph-data.mjs && python scripts/check-hooks-order.py",
     "test:stream": "node scripts/test-stream-protocol.mjs",
     "test:citations": "node scripts/test-citation-markers.mjs",
     "test:kb-settings": "node scripts/test-kb-settings-payload.mjs",
     "test:markdown-url": "node scripts/test-markdown-url.mjs",
     "test:update": "node scripts/test-update-check.mjs",
-    "test:auth": "node scripts/test-auth.mjs"
+    "test:auth": "node scripts/test-auth.mjs",
+    "test:graph": "node scripts/test-graph-data.mjs",
+    "verify:graph": "node scripts/verify-graph-live.mjs"
   },
   "dependencies": {
     "clsx": "^2.0.0",
