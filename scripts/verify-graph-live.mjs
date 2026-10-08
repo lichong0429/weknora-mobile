@@ -1,19 +1,24 @@
 /**
- * 用真实服务端数据验证图谱解析修复（一次性验证脚本）。
+ * 用真实服务端数据验证图谱解析修复（一次性验证脚本，需内网环境）。
  *
  * 目的：证明修复后的 normalizeGraph 能从真实响应里解析出节点，
  * 而不是只在构造的测试数据上通过。
  *
- * 运行：WK_KEY=<api_key> node scripts/verify-graph-live.mjs
+ * 运行：WK_BASE=http://<你的实例地址>:8080/api/v1 WK_KEY=<api_key> node scripts/verify-graph-live.mjs
+ *
+ * 注意：这里**不写默认地址**。本仓库是公开的，任何内网/Tailscale 地址写进源码
+ * 都会被 CI 的安全预检拦下（private-ip 规则），也会泄露内网拓扑。
  */
+
 import {
   normalizeGraph, buildDegreeMap, sortByImportance, isGraphEmpty, looksLikeGraph
 } from '../src/utils/graphData.js';
 
-const BASE = process.env.WK_BASE || 'http://100.97.171.99:8088/api/v1';
+const BASE = process.env.WK_BASE;
 const KEY = process.env.WK_KEY;
-if (!KEY) {
-  console.error('缺少 WK_KEY 环境变量');
+if (!BASE || !KEY) {
+  console.error('缺少环境变量。用法：');
+  console.error('  WK_BASE=http://<你的实例地址>:8080/api/v1 WK_KEY=<api_key> node scripts/verify-graph-live.mjs');
   process.exit(1);
 }
 
