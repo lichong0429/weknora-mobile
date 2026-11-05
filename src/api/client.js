@@ -567,18 +567,26 @@ export async function* chatStream(sessionId, payload, { type = 'knowledge', sign
     throw new Error('服务器响应不支持流式读取（ReadableStream 不可用）。');
   }
   logResponse({ status: res.status, statusText: 'SSE stream started', body: '[event-stream]' });
-  for await (const ev of sseParser(res.body.getReader(), stats)) {
-    try {
-      yield { ...ev, json: JSON.parse(ev.data) };
-    } catch {
-      // 解析失败的帧以前是静默丢弃的：若后端发出非 JSON 载荷（如纯文本错误、
-      // HTML 片段），客户端会"一帧不认"却只显示「未收到回答」。这里留证据。
-      stats.parseErrors += 1;
-      if (!stats.sampleRaw) stats.sampleRaw = String(ev.data || '').slice(0, 300);
-      report({ parseErrors: stats.parseErrors, sampleRaw: stats.sampleRaw });
-      yield ev;
+  // try/finally 而不是"走完再 report"：流异常中断（网络断开、后端 429 后直接掐连接）
+  // 时 generator 会抛错跳出，旧写法跳过末尾的 report，diag.frames/bytes 便停在
+  // 「只收到响应头」那一刻的 0 —— 而 Chat 侧的事件计数是在 for await 循环里实时累加的，
+  // 于是诊断卡片出现「0 字节 + 检索改写×1/工具调用×2」这种自相矛盾。
+  // 放在 finally 里，无论正常结束还是抛错，诊断里的统计都是真实收到的量。
+  try {
+    for await (const ev of sseParser(res.body.getReader(), stats)) {
+      try {
+        yield { ...ev, json: JSON.parse(ev.data) };
+      } catch {
+        // 解析失败的帧以前是静默丢弃的：若后端发出非 JSON 载荷（如纯文本错误、
+        // HTML 片段），客户端会"一帧不认"却只显示「未收到回答」。这里留证据。
+        stats.parseErrors += 1;
+        if (!stats.sampleRaw) stats.sampleRaw = String(ev.data || '').slice(0, 300);
+        report({ parseErrors: stats.parseErrors, sampleRaw: stats.sampleRaw });
+        yield ev;
+      }
     }
+  } finally {
+    report({});
   }
-  report({});
 }
 

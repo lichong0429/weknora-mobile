@@ -171,6 +171,9 @@ function Diagnostics() {
         })
       });
     } catch (err) {
+      // 与 Chat 保持一致：标记「流是被异常中断的」，让自检结论也能把
+      // 「检索已跑通、断在生成答案」归因到服务端（模型 429 / 超时），而不是笼统说网络
+      events.interrupted = true;
       const verdict = diagnoseNoAnswer(diag, events);
       const detail = [...(verdict.detail || []), `自检异常：${err.message || err.name}`];
       setProbe({

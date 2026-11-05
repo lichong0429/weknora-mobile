@@ -13,7 +13,7 @@ import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { MarkdownImage } from './MarkdownImage.jsx';
-import { diagnoseNoAnswer, formatDiagnosisReport } from '../utils/chatDiagnosis.js';
+import { diagnoseNoAnswer, describeStreamError, formatDiagnosisReport } from '../utils/chatDiagnosis.js';
 import { isTerminalStreamEvent } from '../utils/chatStreamProtocol.js';
 import {
   extractCitations, extractInlineThinking, resolveCitation, stripIncompleteCitationTag,
@@ -239,7 +239,7 @@ function Chat() {
     // 本次流的证据采集：只统计「收到了什么」，不涉及内容隐私。
     // 声明在 try 之外，异常分支同样需要用这些证据给出结论。
     const streamDiag = { status: 0, contentType: '', frames: 0, bytes: 0, parseErrors: 0, sampleRaw: '', requestId: '' };
-    const streamEvents = { types: {}, finishReason: '', errorMessage: '', sawComplete: false };
+    const streamEvents = { types: {}, finishReason: '', errorMessage: '', sawComplete: false, interrupted: false };
 
     try {
       let receivedAny = false;
@@ -333,21 +333,29 @@ function Chat() {
       }
     } catch (err) {
       if (err.name !== 'AbortError') {
+        // 标记「客户端侧被异常中断」（区别于用户点「停止」）：诊断据此把结论定位到
+        // 服务端的生成阶段，而不是笼统的 network error（判定顺序见 chatDiagnosis.js）
+        streamEvents.interrupted = true;
+        // 红条给用户看人话；可复制的诊断报告里保留原始异常，便于排查
+        const friendly = describeStreamError(err);
         const verdict = diagnoseNoAnswer(streamDiag, streamEvents);
         setLastDiagnosis(verdict);
         setNoAnswerReport(formatDiagnosisReport({
           ...verdict,
-          detail: [...verdict.detail, `客户端异常：${err.message || err.name}`],
+          detail: [
+            ...verdict.detail,
+            `客户端异常：${err.name || 'Error'} · ${err.message || '（无消息）'}`
+          ],
           query,
           kbCount: selectedKBs.length,
           modelCount: models.length,
           appVersion: APP_VERSION
         }));
-        setStreamError(err.message || '对话失败');
+        setStreamError(friendly.message);
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (!last || last.role !== 'assistant') return prev;
-          return [...prev.slice(0, -1), { ...last, content: last.content || `[请求失败] ${err.message || '未知错误'}` }];
+          return [...prev.slice(0, -1), { ...last, content: last.content || `[请求失败] ${friendly.message}` }];
         });
       }
     } finally {
@@ -448,7 +456,9 @@ function Chat() {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 no-scrollbar">
+      {/* min-h-0：flex 子项默认 min-height:auto，长内容会把高度顶开、导致输入框被挤出可视区。
+          显式归零后消息区才真正成为一个受约束的滚动容器（键盘弹出时输入框才能贴住键盘上沿）。 */}
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 no-scrollbar">
         {loading && (
           <div className="flex items-center justify-center py-12 text-gray-500">
             <Loader2 className="mr-2 h-5 w-5 animate-spin" /> 加载中…
@@ -575,7 +585,9 @@ function Chat() {
             <div className="flex items-start gap-2">
               <Stethoscope className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
               <div className="min-w-0 flex-1">
-                <p className="text-xs font-semibold text-amber-800">本轮未收到回答 · 诊断</p>
+                {/* 标题不带「未收到回答」：答案吐到一半断开时气泡里已有半截回答，
+                    标题再声称"没收到"就会与正文自相矛盾 */}
+                <p className="text-xs font-semibold text-amber-800">本轮问答诊断</p>
                 <p className="mt-1 text-[11px] leading-relaxed text-amber-800">
                   {lastDiagnosis?.verdict}
                 </p>
