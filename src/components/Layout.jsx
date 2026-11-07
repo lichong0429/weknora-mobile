@@ -66,13 +66,29 @@ function Layout() {
         </h1>
       </header>
 
-      <main className="flex-1 overflow-y-auto no-scrollbar">
+      {/* min-h-0：flex 子项默认 min-height:auto，内容会被撑到超过容器高度。
+          overflow 非 visible 时浏览器自动最小尺寸即为 0，这里显式写出来，
+          是为了让「纵向 flex 链每层都可收缩」这条约束在代码里看得见、
+          不至于将来把 overflow 类一改就悄悄退化。
+          no-scrollbar 只影响滚动条外观，不影响滚动能力。 */}
+      <main
+        className={clsx(
+          'min-h-0 flex-1 no-scrollbar',
+          // 聊天页自带内部滚动容器（消息区），外层 main 再挂 overflow-y-auto 就会出现
+          // 嵌套滚动：内层滚到底之后，手势会继续被外层接走（Android WebView 上下拉回弹/
+          // 整页被拖动）。改成 overflow-hidden 让 main 彻底退出滚动竞争，
+          // 聊天页的手势只落在消息区上。其余页面仍由 main 负责滚动。
+          isChatRoute ? 'overflow-hidden' : 'overflow-y-auto'
+        )}
+      >
         {/* pb-40（160px）是给悬浮底部导航留的占位。它原先对所有路由生效，而导航只在
             5 个主 Tab 页显示 —— 聊天页没有导航却照样多出 160px，正好是用户看到的
             「输入框与键盘之间空了一大块」。故改为只在显示导航时加。
             聊天页另给 h-full + overflow-hidden：让 Chat 的 flex-1 有确定高度，
             消息区自己滚动、输入区钉在底部（父层是 min-h-full 时高度不定，输入框会随
-            长内容被推走）。 */}
+            长内容被推走）。
+            注意：这一层给了确定高度 + overflow-hidden 之后，Chat 根节点必须同时带
+            min-h-0，否则它会被内容撑高、越过本层后被裁掉（详见 Chat.jsx 根节点注释）。 */}
         <div
           className={clsx(
             'mx-auto flex w-full max-w-md flex-col',

@@ -381,7 +381,12 @@ function Chat() {
   const loading = sessionLoading || messagesLoading;
 
   return (
-    <div className="flex flex-1 flex-col">
+    // min-h-0 是**必须**的：父级（Layout 里的 h-full overflow-hidden 容器）给了确定高度，
+    // 但 flex 列方向子项默认 min-height:auto —— 内容一多，本节点就按内容高度被撑高、
+    // 越过父容器后被父级 overflow-hidden 裁掉；同时因为本节点自身"已经够高"，
+    // 里面的消息区（flex-1 min-h-0 overflow-y-auto）拿不到受限高度 → 既不产生滚动区间、
+    // 也滑不动（v1.9.4 的回归就是这么来的）。纵向 flex 链每一层都要可收缩，只给最内层加不够。
+    <div className="flex min-h-0 flex-1 flex-col">
       {/* Header */}
       <div className="safe-top sticky top-0 z-10 border-b border-line bg-white/90 backdrop-blur px-4 py-3">
         <div className="flex items-center justify-between">
