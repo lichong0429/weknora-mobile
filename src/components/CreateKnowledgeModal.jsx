@@ -24,7 +24,11 @@ function CreateKnowledgeModal({ kbId, onClose, onCreated }) {
       if (mode === 'url') {
         await Knowledge.url(kbId, { url });
       } else {
-        await Knowledge.manual(kbId, { title, content, status: 'enabled' });
+        // status 取 publish / draft。历史上这里发过 'enabled'（早期接口的取值），
+        // 但当前服务端的 manual 接口只认这两个值，发 'enabled' 会直接 400：
+        //   {"error":{"code":1010,"message":"状态仅支持 draft 或 publish"}}
+        // 「手动创建」是可直接检索的正式条目，故用 publish 而非 draft。
+        await Knowledge.manual(kbId, { title, content, status: 'publish' });
       }
       onCreated?.();
       onClose();
