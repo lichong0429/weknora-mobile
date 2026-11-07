@@ -139,6 +139,16 @@ html, body, #root {
 .md-body img { max-width: 100%; height: auto; border-radius: 8px; margin: 0.6em 0; }
 .md-body hr { border: none; border-top: 1px solid #e5e7eb; margin: 1.2em 0; }
 
+/* 数学公式（KaTeX）：行间公式在 KaTeX 自带样式里是 white-space: nowrap，
+   窄屏上过宽的公式（矩阵、多行对齐、长积分）会顶出 85% 宽的气泡、把整个页面
+   撑出横向滚动。这里让公式自己横向滚动，与上面 .md-body table 的处理方式一致；
+   padding 给分式/下标的上下沿留空间，避免 overflow-y: hidden 把它们裁掉。 */
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.15em 0 0.35em;
+}
+
 /* ============ 深色主题 ============ */
 .dark { color-scheme: dark; }
 
