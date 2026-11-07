@@ -11,7 +11,13 @@ import {
 import { clsx } from 'clsx';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
+// 问答页自己也引一份 KaTeX 排版样式（WikiView 已引）：
+// 原先只有 WikiView 引，若将来路由改成按需加载，只在问答页停留的用户
+// 就拿不到 katex.min.css —— 公式会被渲染成一堆没样式的 span 挤在一起。
+import 'katex/dist/katex.min.css';
 import { MarkdownImage } from './MarkdownImage.jsx';
 import { diagnoseNoAnswer, describeStreamError, formatDiagnosisReport } from '../utils/chatDiagnosis.js';
 import { isTerminalStreamEvent } from '../utils/chatStreamProtocol.js';
@@ -21,10 +27,29 @@ import {
 } from '../utils/citationMarkers.js';
 import { APP_VERSION } from '../utils/appVersion.js';
 import { markdownUrlTransform } from '../utils/markdownUrl.js';
+// 公式侧的两件东西放在 utils 里，好让 scripts/test-chat-katex.mjs 能直接 import
+// 同一份配置与同一个归一化函数（Chat.jsx 是 JSX，Node 侧测试 import 不了）。
+import { KATEX_OPTIONS, normalizeBlockMath } from '../utils/markdownMath.js';
 
 // 放行应用自有协议（cite:/wiki:）与 WeKnora 内部存储协议（local://、resource://…），
 // 其余仍交给 react-markdown 的默认清洗，保持对模型输出的 XSS 防护。
 const mdUrlTransform = (url) => markdownUrlTransform(url, defaultUrlTransform);
+
+/**
+ * 问答侧统一的 markdown 插件表（助手回答与用户消息共用，保证两处渲染一致）。
+ *
+ * `KATEX_OPTIONS` 见 ../utils/markdownMath.js（含 throwOnError / strict / output 的取舍说明）。
+ *
+ * 顺序说明：`[[rehypeKatex, …], rehypeRaw]` 与 WikiView 完全一致。
+ * rehype-katex 只处理 remark-math 生成的 `math-inline` / `math-display` 元素，
+ * rehypeRaw 只把 `type: 'raw'` 的原始 HTML 解析成元素，两者作用对象不相交，
+ * 因此「HTML 标签 + 公式」的正文在两种顺序下都能正常出公式。
+ * 唯一差别是：正文里被 HTML 块包住的 `$$…$$` 在 mdast 阶段就被当成原始 HTML 吞掉，
+ * 根本不会生成 math 节点 —— 这与插件顺序无关，换顺序也救不回来（属于 markdown 解析层限制）。
+ * 既然收益为零，就不去动 WikiView 已验证的顺序，避免把已经正常的功能改出问题。
+ */
+const CHAT_REMARK_PLUGINS = [remarkGfm, remarkMath];
+const CHAT_REHYPE_PLUGINS = [[rehypeKatex, KATEX_OPTIONS], rehypeRaw];
 
 function Chat() {
   const { id } = useParams();
@@ -525,12 +550,14 @@ function Chat() {
                       onOpenWiki={wikiKbId ? openWikiPage : undefined}
                     />
                   ) : (
+                    // 用户自己也可能输入公式（$x^2$ / $$…$$），插件与助手侧保持同一套；
+                    // 单行 $$…$$ 同样要先归一化成块级，否则只会渲染成小号行内公式
                     <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      rehypePlugins={[rehypeRaw]}
+                      remarkPlugins={CHAT_REMARK_PLUGINS}
+                      rehypePlugins={CHAT_REHYPE_PLUGINS}
                       components={{ img: MarkdownImage }}
                     >
-                      {msg.content || ''}
+                      {normalizeBlockMath(msg.content || '')}
                     </ReactMarkdown>
                   )}
                 </div>
@@ -810,6 +837,11 @@ function AssistantMarkdown({ content, references, onOpenCitation, onOpenWiki }) 
     () => extractCitations(stripIncompleteCitationTag(content || ''), references),
     [content, references]
   );
+  // 归一化放在引用标记提取**之后**：先把 <kb/> 换成 [1](cite:kb:1)，再动公式的换行，
+  // 两者互不干扰；而且此时 citations 已经把标记从正文里摘干净，行级判断更稳。
+  // 为什么要归一化：单行 `$$E=mc^2$$` 会被 remark-math 当成行内公式（小号、不居中），
+  // 详见 ../utils/markdownMath.js 顶部说明。
+  const normalized = useMemo(() => normalizeBlockMath(text), [text]);
   const byNumber = useMemo(() => new Map(markers.map((m) => [m.number, m])), [markers]);
   const components = useMemo(() => ({
     img: MarkdownImage,
@@ -873,14 +905,14 @@ function AssistantMarkdown({ content, references, onOpenCitation, onOpenWiki }) 
 
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeRaw]}
+      remarkPlugins={CHAT_REMARK_PLUGINS}
+      rehypePlugins={CHAT_REHYPE_PLUGINS}
       // 放行自有协议（cite:/wiki:）与 WeKnora 内部存储协议（local://、resource:// 等），
       // 其余仍走默认白名单。此前只放行了前两种，导致回答里的图片 src 被清空、无法显示。
       urlTransform={mdUrlTransform}
       components={components}
     >
-      {text}
+      {normalized}
     </ReactMarkdown>
   );
 }
