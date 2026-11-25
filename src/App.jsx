@@ -24,6 +24,7 @@ import SystemInfo from './components/SystemInfo.jsx';
 import UpdatePrompt from './components/UpdatePrompt.jsx';
 import { hasCredentials, resolveAuthMode, AUTH_MODE_ACCOUNT } from './utils/auth.js';
 import { onUnauthorized } from './api/client.js';
+import { I18nProvider } from './i18n/I18nContext.jsx';
 
 // 登录守卫：没有可用凭据时不渲染主界面。
 //
@@ -57,37 +58,42 @@ function AuthWatcher() {
 
 function App() {
   return (
-    <ConfigProvider>
-      {/* 启动时检查更新：有新版才弹窗，没有则完全不渲染、不打扰 */}
-      <UpdatePrompt />
-      <AuthWatcher />
-      <RequireAuth>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/" element={<Layout />}>
-            <Route index element={<Home />} />
-            <Route path="settings" element={<Settings />} />
-            <Route path="diagnostics" element={<Diagnostics />} />
-            <Route path="kbs" element={<KBList />} />
-            <Route path="kb/:id" element={<KBDetail />} />
-            <Route path="knowledge/:id" element={<KnowledgeDetail />} />
-            <Route path="agents" element={<AgentList />} />
-            <Route path="agent/:id" element={<AgentDetail />} />
-            <Route path="sessions" element={<SessionList />} />
-            <Route path="session/:id" element={<Chat />} />
-            <Route path="search" element={<Search />} />
-            <Route path="models" element={<ModelList />} />
-            <Route path="model/:id" element={<ModelDetail />} />
-            <Route path="vector-stores" element={<VectorStoreList />} />
-            <Route path="vector-store/:id" element={<VectorStoreDetail />} />
-            <Route path="web-searches" element={<WebSearchProviderList />} />
-            <Route path="web-search/:id" element={<WebSearchProviderDetail />} />
-            <Route path="system" element={<SystemInfo />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Route>
-        </Routes>
-      </RequireAuth>
-    </ConfigProvider>
+    // I18nProvider 放在最外层：RequireAuth 里的 <Login />、路由内所有页面，
+    // 以及 UpdatePrompt 这种「不在路由里」的组件都要能拿到 t()。
+    // 语言切换只触发重渲染，不重挂载子树 —— Chat 输入框与 Login 表单因此不会丢内容。
+    <I18nProvider>
+      <ConfigProvider>
+        {/* 启动时检查更新：有新版才弹窗，没有则完全不渲染、不打扰 */}
+        <UpdatePrompt />
+        <AuthWatcher />
+        <RequireAuth>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/" element={<Layout />}>
+              <Route index element={<Home />} />
+              <Route path="settings" element={<Settings />} />
+              <Route path="diagnostics" element={<Diagnostics />} />
+              <Route path="kbs" element={<KBList />} />
+              <Route path="kb/:id" element={<KBDetail />} />
+              <Route path="knowledge/:id" element={<KnowledgeDetail />} />
+              <Route path="agents" element={<AgentList />} />
+              <Route path="agent/:id" element={<AgentDetail />} />
+              <Route path="sessions" element={<SessionList />} />
+              <Route path="session/:id" element={<Chat />} />
+              <Route path="search" element={<Search />} />
+              <Route path="models" element={<ModelList />} />
+              <Route path="model/:id" element={<ModelDetail />} />
+              <Route path="vector-stores" element={<VectorStoreList />} />
+              <Route path="vector-store/:id" element={<VectorStoreDetail />} />
+              <Route path="web-searches" element={<WebSearchProviderList />} />
+              <Route path="web-search/:id" element={<WebSearchProviderDetail />} />
+              <Route path="system" element={<SystemInfo />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Route>
+          </Routes>
+        </RequireAuth>
+      </ConfigProvider>
+    </I18nProvider>
   );
 }
 

@@ -1,5 +1,7 @@
 # WeKnora Mobile
 
+[English](./README.en.md) | 简体中文
+
 一个为 WeKnora 打造的移动端应用，解决手机访问 WeKnora 网页布局不便的问题。
 
 ## 功能

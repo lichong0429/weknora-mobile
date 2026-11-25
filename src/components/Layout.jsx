@@ -4,19 +4,24 @@ import { clsx } from 'clsx';
 import { useEffect, useRef } from 'react';
 import { pushBackHandler } from '../backHandler.js';
 import { useVisibleViewportHeight } from '../hooks/useVisibleViewportHeight.js';
+import { useI18n } from '../i18n/I18nContext.jsx';
 import ErrorBoundary from './ErrorBoundary.jsx';
 
+// 模块级只保留「路由 + 图标」这类与语言无关的常量；
+// 文案由组件内 `t('nav.' + key)` 现场取，这样切语言时导航栏能跟着变
+// （常量里写死中文的话，语言切换后它永远不会更新）。
 const navItems = [
-  { to: '/', label: '首页', icon: Home },
-  { to: '/kbs', label: '知识库', icon: Database },
-  { to: '/search', label: '搜索', icon: Search },
-  { to: '/sessions', label: '会话', icon: MessageSquare },
-  { to: '/settings', label: '设置', icon: Settings }
+  { to: '/', key: 'home', icon: Home },
+  { to: '/kbs', key: 'kbs', icon: Database },
+  { to: '/search', key: 'search', icon: Search },
+  { to: '/sessions', key: 'sessions', icon: MessageSquare },
+  { to: '/settings', key: 'settings', icon: Settings }
 ];
 
 function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useI18n();
   const isRoot = location.pathname === '/';
 
   // 仅在 5 个主 Tab 页面显示底部导航；子页面（会话/知识详情等）隐藏，
@@ -51,7 +56,7 @@ function Layout() {
           <button
             onClick={() => navigate(-1)}
             className="rounded-xl p-1.5 hover:bg-surface-subtle active:scale-95 transition-transform"
-            aria-label="返回"
+            aria-label={t('common.back')}
           >
             <ChevronLeft className="h-5 w-5 text-ink" />
           </button>
@@ -127,7 +132,7 @@ function Layout() {
                       }
                     >
                       <Icon className="h-[18px] w-[18px]" strokeWidth={isRoot && item.to === '/' ? 2.2 : 1.8} />
-                      {item.label}
+                      {t('nav.' + item.key)}
                     </NavLink>
                   </li>
                 );

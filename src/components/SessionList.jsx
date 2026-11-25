@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
+import { useI18n } from '../i18n/I18nContext.jsx';
 import { Session } from '../api/endpoints.js';
 import { extractList } from '../utils/list.js';
 import { MessageSquare, Plus, Pin, Trash2, Loader2, AlertCircle, X, MessageSquarePlus } from 'lucide-react';
@@ -8,6 +9,7 @@ import { clsx } from 'clsx';
 
 function SessionList() {
   const navigate = useNavigate();
+  const { t } = useI18n();
   const [showCreate, setShowCreate] = useState(false);
   const [title, setTitle] = useState('');
   const { data, loading, error, run, setData } = useAsync(() => Session.list({ page: 1, page_size: 50 }), []);
@@ -31,7 +33,7 @@ function SessionList() {
 
   const handleDelete = async (s, e) => {
     e.stopPropagation();
-    if (!window.confirm('确定删除该会话？')) return;
+    if (!window.confirm(t('sessionList.confirmDelete'))) return;
     await Session.remove(s.id);
     run();
   };
@@ -39,18 +41,18 @@ function SessionList() {
   return (
     <div className="p-4">
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-xl font-bold text-gray-900">会话</h2>
+        <h2 className="text-xl font-bold text-gray-900">{t('sessionList.title')}</h2>
         <button
           onClick={() => setShowCreate(true)}
           className="flex items-center gap-1 rounded-full bg-blue-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
         >
-          <Plus className="h-4 w-4" /> 新建
+          <Plus className="h-4 w-4" /> {t('sessionList.new')}
         </button>
       </div>
 
       {loading && (
         <div className="flex items-center justify-center py-12 text-gray-500">
-          <Loader2 className="mr-2 h-5 w-5 animate-spin" /> 加载中…
+          <Loader2 className="mr-2 h-5 w-5 animate-spin" /> {t('common.loading')}
         </div>
       )}
 
@@ -73,11 +75,12 @@ function SessionList() {
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <h3 className="truncate font-semibold text-gray-900">{s.title || '未命名会话'}</h3>
+                {/* s.title / s.description 是用户数据，绝不进字典 */}
+                <h3 className="truncate font-semibold text-gray-900">{s.title || t('sessionList.untitled')}</h3>
                 {s.is_pinned && <Pin className="h-3.5 w-3.5 fill-blue-600 text-blue-600" />}
               </div>
               <p className="truncate text-xs text-gray-500">
-                {new Date(s.created_at).toLocaleString()} · {s.description || '无描述'}
+                {new Date(s.created_at).toLocaleString()} · {s.description || t('sessionList.noDescription')}
               </p>
             </div>
             <div className="flex items-center gap-1">
@@ -102,26 +105,26 @@ function SessionList() {
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center">
           <div className="w-full max-w-md rounded-2xl bg-white p-4 shadow-xl">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold">新建会话</h3>
+              <h3 className="text-lg font-semibold">{t('sessionList.createTitle')}</h3>
               <button onClick={() => setShowCreate(false)} className="rounded-full p-1 hover:bg-gray-100">
                 <X className="h-5 w-5 text-gray-500" />
               </button>
             </div>
             <form onSubmit={handleCreate} className="space-y-3">
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">标题（可选）</label>
+                <label className="mb-1 block text-sm font-medium text-gray-700">{t('sessionList.fieldTitle')}</label>
                 <input
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  placeholder="新会话"
+                  placeholder={t('sessionList.titlePlaceholder')}
                 />
               </div>
               <button
                 type="submit"
                 className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-2.5 text-sm font-medium text-white hover:bg-blue-700"
               >
-                <MessageSquarePlus className="h-4 w-4" /> 创建会话
+                <MessageSquarePlus className="h-4 w-4" /> {t('sessionList.create')}
               </button>
             </form>
           </div>

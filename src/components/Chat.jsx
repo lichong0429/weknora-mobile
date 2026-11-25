@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
+import { useI18n } from '../i18n/I18nContext.jsx';
 import { Session, Message, KB, Agent, Model, Chunk } from '../api/endpoints.js';
 import { chatStream } from '../api/client.js';
 import { pushBackHandler } from '../backHandler.js';
@@ -55,6 +56,8 @@ function Chat() {
   const { id } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+  // 只翻界面文案：AI 回答正文、引用原文、会话标题、知识库/模型/智能体名称一律原样展示
+  const { t } = useI18n();
   const { data: sessionRes, loading: sessionLoading, error: sessionError, run: refreshSession } = useAsync(() => Session.detail(id), [id]);
   const { data: messagesRes, loading: messagesLoading, error: messagesError, run: refreshMessages } = useAsync(() => Message.load(id, { limit: 50 }), [id]);
   const { data: kbRes } = useAsync(() => KB.list(), []);
@@ -186,7 +189,7 @@ function Chat() {
       })
       .catch((err) => {
         if (cancelled) return;
-        setRefChunk({ loading: false, error: err?.message || '加载失败', data: null });
+        setRefChunk({ loading: false, error: err?.message || t('common.loadFailed'), data: null });
       });
     return () => { cancelled = true; };
   }, [activeRef]);
@@ -222,7 +225,7 @@ function Chat() {
   const handleSend = async () => {
     if (!input.trim() || streaming) return;
     if (selectedKBs.length === 0 && !selectedAgentId) {
-      setStreamError('请先点右上角设置图标，选择至少一个知识库或智能体，再提问。');
+      setStreamError(t('chat.selectKbFirst'));
       return;
     }
     const query = input.trim();
@@ -257,7 +260,7 @@ function Chat() {
         const last = prev[prev.length - 1];
         if (!last || last.role !== 'assistant') return prev;
         if (last.content) return prev; // 已收到内容，不提示
-        return [...prev.slice(0, -1), { ...last, content: '⏳ 等待响应中…服务器可能需要较长时间，请稍候。' }];
+        return [...prev.slice(0, -1), { ...last, content: t('chat.waiting') }];
       });
     }, 15000);
 
@@ -321,7 +324,7 @@ function Chat() {
             next.knowledge_references = knowledge_references;
           }
           if (response_type === 'error') {
-            next.content += `\n[错误] ${content}`;
+            next.content += `\n${t('chat.errorTag')}${content}`;
           }
           return [...prev.slice(0, -1), next];
         });
@@ -348,7 +351,9 @@ function Chat() {
           if (last.content) return prev; // 可能有 reasoning 但没 answer
           return [...prev.slice(0, -1), {
             ...last,
-            content: `**未收到回答** —— ${verdict.verdict}\n\n${verdict.action}\n\n（下方诊断卡片可查看原始证据并复制）`,
+            // 诊断结论（verdict/action）来自 utils/chatDiagnosis.js，本期不翻；
+            // 这里只翻界面骨架文案，避免把结论文本塞进字典
+            content: `${t('chat.noAnswerHeading')} —— ${verdict.verdict}\n\n${verdict.action}\n\n${t('chat.noAnswerHint')}`,
             diagnosis: verdict
           }];
         });
@@ -369,7 +374,7 @@ function Chat() {
           ...verdict,
           detail: [
             ...verdict.detail,
-            `客户端异常：${err.name || 'Error'} · ${err.message || '（无消息）'}`
+            t('chat.clientError', { name: err.name || 'Error', message: err.message || '—' })
           ],
           query,
           kbCount: selectedKBs.length,
@@ -380,7 +385,7 @@ function Chat() {
         setMessages((prev) => {
           const last = prev[prev.length - 1];
           if (!last || last.role !== 'assistant') return prev;
-          return [...prev.slice(0, -1), { ...last, content: last.content || `[请求失败] ${friendly.message}` }];
+          return [...prev.slice(0, -1), { ...last, content: last.content || `${t('chat.requestFailed')}${friendly.message}` }];
         });
       }
     } finally {
@@ -416,10 +421,10 @@ function Chat() {
       <div className="safe-top sticky top-0 z-10 border-b border-line bg-white/90 backdrop-blur px-4 py-3">
         <div className="flex items-center justify-between">
           <div className="min-w-0 flex-1">
-            <h2 className="truncate text-base font-semibold text-ink">{session?.title || '新会话'}</h2>
+            <h2 className="truncate text-base font-semibold text-ink">{session?.title || t('chat.newSession')}</h2>
             <p className="truncate text-xs text-ink-muted">
-              {selectedAgentId ? agents.find((a) => a.id === selectedAgentId)?.name : '知识库问答'}
-              {selectedKBs.length > 0 && ` · ${selectedKBs.length} 个知识库`}
+              {selectedAgentId ? agents.find((a) => a.id === selectedAgentId)?.name : t('chat.kbQa')}
+              {selectedKBs.length > 0 && t('chat.kbSelectedCount', { n: selectedKBs.length })}
             </p>
           </div>
           <button
@@ -434,14 +439,14 @@ function Chat() {
           <div className="mt-3 space-y-3 rounded-[14px] bg-surface-soft p-3">
             <div>
               <label className="mb-1 flex items-center gap-1 text-xs font-medium text-ink-secondary">
-                <Cpu className="h-3.5 w-3.5" /> 模型（可选）
+                <Cpu className="h-3.5 w-3.5" /> {t('chat.configModel')}
               </label>
               <select
                 value={selectedModelId}
                 onChange={(e) => setSelectedModelId(e.target.value)}
                 className="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm"
               >
-                <option value="">使用默认模型</option>
+                <option value="">{t('chat.configDefaultModel')}</option>
                 {models.map((m) => (
                   <option key={m.id} value={m.id}>{m.name}</option>
                 ))}
@@ -449,14 +454,14 @@ function Chat() {
             </div>
             <div>
               <label className="mb-1 flex items-center gap-1 text-xs font-medium text-gray-700">
-                <Bot className="h-3.5 w-3.5" /> 智能体（可选）
+                <Bot className="h-3.5 w-3.5" /> {t('chat.configAgent')}
               </label>
               <select
                 value={selectedAgentId}
                 onChange={(e) => setSelectedAgentId(e.target.value)}
                 className="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm"
               >
-                <option value="">不使用 Agent</option>
+                <option value="">{t('chat.configNoAgent')}</option>
                 {agents.map((a) => (
                   <option key={a.id} value={a.id}>{a.name}</option>
                 ))}
@@ -464,10 +469,10 @@ function Chat() {
             </div>
             <div>
               <label className="mb-1 flex items-center gap-1 text-xs font-medium text-gray-700">
-                <BookOpen className="h-3.5 w-3.5" /> 关联知识库
+                <BookOpen className="h-3.5 w-3.5" /> {t('chat.configKbs')}
               </label>
               <div className="max-h-32 overflow-y-auto rounded-lg border border-gray-200 bg-white p-2">
-                {kbs.length === 0 && <p className="text-xs text-gray-400">暂无知识库</p>}
+                {kbs.length === 0 && <p className="text-xs text-gray-400">{t('chat.configNoKbs')}</p>}
                 {kbs.map((kb) => (
                   <label key={kb.id} className="flex items-center gap-2 py-1 text-sm text-gray-700">
                     <input
@@ -491,7 +496,7 @@ function Chat() {
       <div className="flex-1 min-h-0 overflow-y-auto p-4 no-scrollbar">
         {loading && (
           <div className="flex items-center justify-center py-12 text-gray-500">
-            <Loader2 className="mr-2 h-5 w-5 animate-spin" /> 加载中…
+            <Loader2 className="mr-2 h-5 w-5 animate-spin" /> {t('common.loading')}
           </div>
         )}
 
@@ -510,7 +515,7 @@ function Chat() {
         {selectedKBs.length === 0 && !selectedAgentId && kbs.length > 0 && (
           <div className="mb-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-700">
             <AlertCircle className="mr-1 inline h-4 w-4" />
-            尚未选择知识库：请点右上角齿轮图标，勾选至少一个知识库后再提问。
+            {t('chat.noKbSelected')}
           </div>
         )}
 
@@ -536,7 +541,7 @@ function Chat() {
               >
                 <div className={clsx('mb-1 flex items-center gap-1 text-xs', msg.role === 'user' ? 'opacity-80' : 'text-ink-muted')}>
                   {msg.role === 'user' ? <User className="h-3 w-3" /> : <Sparkles className="h-3 w-3" />}
-                  {msg.role === 'user' ? '我' : 'AI'}
+                  {msg.role === 'user' ? t('chat.me') : t('chat.ai')}
                 </div>
                 {isAssistant && reasoningText && (
                   <ThinkingBlock text={reasoningText} />
@@ -544,7 +549,7 @@ function Chat() {
                 <div className={msg.role === 'user' ? '' : 'md-body'}>
                   {isAssistant ? (
                     <AssistantMarkdown
-                      content={bodyContent || (msg.isStream ? '思考中…' : '')}
+                      content={bodyContent || (msg.isStream ? t('chat.thinking') : '')}
                       references={msg.knowledge_references}
                       onOpenCitation={openCitationMarker}
                       onOpenWiki={wikiKbId ? openWikiPage : undefined}
@@ -565,7 +570,7 @@ function Chat() {
                   <div className="mt-3 border-t border-line pt-2">
                     <div className="mb-1 flex items-center justify-between">
                       <p className="flex items-center gap-1 text-xs font-medium text-ink-muted">
-                        <Quote className="h-3 w-3" /> 引用 {msg.knowledge_references.length} 条
+                        <Quote className="h-3 w-3" /> {t('chat.refCount', { n: msg.knowledge_references.length })}
                       </p>
                       {msg.knowledge_references.length > 3 && (
                         <button
@@ -573,7 +578,7 @@ function Chat() {
                           onClick={() => setExpandedRefs((prev) => ({ ...prev, [msg.id]: !prev[msg.id] }))}
                           className="flex items-center gap-0.5 text-[11px] font-medium text-brand-600"
                         >
-                          {expandedRefs[msg.id] ? '收起' : `展开全部`}
+                          {expandedRefs[msg.id] ? t('common.collapse') : t('chat.expandAll')}
                           {expandedRefs[msg.id] ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                         </button>
                       )}
@@ -589,7 +594,7 @@ function Chat() {
                         >
                           <span className="flex items-center gap-1 font-medium text-brand-600">
                             <FileText className="h-3 w-3 shrink-0" />
-                            <span className="truncate">{ref.knowledge_title || ref.knowledge_filename || '引用片段'}</span>
+                            <span className="truncate">{ref.knowledge_title || ref.knowledge_filename || t('chat.refFragment')}</span>
                           </span>
                           <p className="mt-0.5 line-clamp-2">{ref.content}</p>
                         </button>
@@ -619,7 +624,7 @@ function Chat() {
               <div className="min-w-0 flex-1">
                 {/* 标题不带「未收到回答」：答案吐到一半断开时气泡里已有半截回答，
                     标题再声称"没收到"就会与正文自相矛盾 */}
-                <p className="text-xs font-semibold text-amber-800">本轮问答诊断</p>
+                <p className="text-xs font-semibold text-amber-800">{t('chat.diagnosisTitle')}</p>
                 <p className="mt-1 text-[11px] leading-relaxed text-amber-800">
                   {lastDiagnosis?.verdict}
                 </p>
@@ -638,20 +643,20 @@ function Chat() {
                         setTimeout(() => setCopied(false), 2000);
                       } catch {
                         // WebView 可能没有剪贴板权限：退化为长按选择文本
-                        window.prompt('复制以下诊断信息：', noAnswerReport);
+                        window.prompt(t('chat.copyDiagnosisPrompt'), noAnswerReport);
                       }
                     }}
                     className="flex items-center gap-1 rounded-lg bg-white px-2 py-1 text-[11px] font-medium text-amber-800 shadow-sm"
                   >
                     {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                    {copied ? '已复制' : '复制诊断信息'}
+                    {copied ? t('common.copied') : t('chat.copyDiagnosis')}
                   </button>
                   <button
                     type="button"
                     onClick={() => { setNoAnswerReport(null); setStreamError(null); }}
                     className="rounded-lg px-2 py-1 text-[11px] font-medium text-amber-700"
                   >
-                    忽略
+                    {t('chat.ignore')}
                   </button>
                 </div>
               </div>
@@ -673,7 +678,7 @@ function Chat() {
               setTimeout(() => e.target.scrollIntoView({ block: 'nearest' }), 250);
             }}
             rows={1}
-            placeholder="输入问题…"
+            placeholder={t('chat.inputPlaceholder')}
             className="max-h-32 flex-1 resize-none rounded-[14px] border border-line bg-surface-soft px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-faint focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
           {streaming ? (
@@ -711,22 +716,22 @@ function Chat() {
                 : <Quote className="mt-0.5 h-5 w-5 shrink-0 text-brand-600" />}
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-gray-900">
-                  {activeRef._citeNumber ? `引用 ${activeRef._citeNumber} · ` : ''}
-                  {activeRef.knowledge_title || activeRef.knowledge_filename || '引用片段'}
+                  {activeRef._citeNumber ? t('chat.refNumber', { n: activeRef._citeNumber }) : ''}
+                  {activeRef.knowledge_title || activeRef.knowledge_filename || t('chat.refFragment')}
                 </p>
                 <p className="mt-0.5 truncate text-[11px] text-gray-500">
                   {activeRef._web
                     ? activeRef.url
-                    : (activeRef.knowledge_filename || '来源文档')}
-                  {!activeRef._web && activeRef.chunk_index !== undefined && ` · 第 ${activeRef.chunk_index} 段`}
-                  {!activeRef._web && typeof activeRef.score === 'number' && ` · 相关度 ${activeRef.score.toFixed(4)}`}
+                    : (activeRef.knowledge_filename || t('chat.sourceDoc'))}
+                  {!activeRef._web && activeRef.chunk_index !== undefined && t('chat.chunkIndex', { n: activeRef.chunk_index })}
+                  {!activeRef._web && typeof activeRef.score === 'number' && t('chat.relevance', { score: activeRef.score.toFixed(4) })}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setActiveRef(null)}
                 className="shrink-0 rounded-full p-1 text-gray-400 hover:bg-gray-100"
-                aria-label="关闭"
+                aria-label={t('common.close')}
               >
                 <X className="h-5 w-5" />
               </button>
@@ -735,23 +740,23 @@ function Chat() {
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
               {(activeRef.start_at !== undefined && activeRef.end_at !== undefined) && !activeRef._web && (
                 <p className="mb-2 text-[11px] text-gray-400">
-                  原文位置：第 {activeRef.start_at}–{activeRef.end_at} 字符
+                  {t('chat.originalRange', { start: activeRef.start_at, end: activeRef.end_at })}
                 </p>
               )}
 
               {activeRef._web ? (
                 <p className="text-xs leading-relaxed text-gray-600">
-                  这是联网搜索命中的网页，点下方按钮会在浏览器中打开。
+                  {t('chat.webHint')}
                 </p>
               ) : refChunk.loading ? (
                 <p className="flex items-center gap-1.5 text-xs text-gray-500">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> 正在读取引用原文…
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> {t('chat.readingChunk')}
                 </p>
               ) : refChunk.error ? (
                 <div className="rounded-xl bg-amber-50 p-3 text-xs text-amber-800">
-                  取引用原文失败：{refChunk.error}
+                  {t('chat.chunkLoadFailed', { detail: refChunk.error })}
                   <br />
-                  可点下方「查看来源文档」到文档里查看完整内容。
+                  {t('chat.chunkLoadHint')}
                 </div>
               ) : (activeRef.content || refChunk.data?.content) ? (
                 <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-gray-800">
@@ -759,16 +764,16 @@ function Chat() {
                 </p>
               ) : (
                 <p className="text-xs leading-relaxed text-gray-500">
-                  这条引用没有可显示的正文（后端只回传引用列表中靠前的片段，正文里标注的引用可能超出该列表）。
-                  {activeRef.knowledge_filename ? ` 来源文档：${activeRef.knowledge_filename}。` : ''}
-                  可点下方「查看来源文档」到文档里查看完整内容。
+                  {t('chat.emptyRef')}
+                  {activeRef.knowledge_filename ? t('chat.emptyRefSource', { file: activeRef.knowledge_filename }) : ''}
+                  {t('chat.chunkLoadHint')}
                 </p>
               )}
               {/* 元数据里的 content 常是父块全文，比命中片段更完整，作为补充展示 */}
               {activeRef.metadata?.content && activeRef.metadata.content !== activeRef.content && (
                 <details className="mt-3 rounded-xl bg-surface-soft p-3">
                   <summary className="cursor-pointer text-xs font-medium text-gray-700">
-                    查看所在段落全文
+                    {t('chat.metadataSummary')}
                   </summary>
                   <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-relaxed text-gray-600">
                     {activeRef.metadata.content}
@@ -784,7 +789,7 @@ function Chat() {
                   href={activeRef.url}
                   className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-sky-600 py-2.5 text-xs font-medium text-white no-underline"
                 >
-                  <ExternalLink className="h-3.5 w-3.5" /> 打开网页
+                  <ExternalLink className="h-3.5 w-3.5" /> {t('chat.openWeb')}
                 </a>
               ) : (
                 <>
@@ -798,7 +803,7 @@ function Chat() {
                       }}
                       className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-brand-600 py-2.5 text-xs font-medium text-white"
                     >
-                      <ExternalLink className="h-3.5 w-3.5" /> 查看来源文档
+                      <ExternalLink className="h-3.5 w-3.5" /> {t('chat.viewSourceDoc')}
                     </button>
                   )}
                   {(activeRef.content || refChunk.data?.content) && (
@@ -811,13 +816,13 @@ function Chat() {
                           setRefCopied(true);
                           setTimeout(() => setRefCopied(false), 2000);
                         } catch {
-                          window.prompt('复制引用内容：', text);
+                          window.prompt(t('chat.copyRefPrompt'), text);
                         }
                       }}
                       className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-surface-subtle py-2.5 text-xs font-medium text-gray-700"
                     >
                       {refCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                      {refCopied ? '已复制' : '复制引用'}
+                      {refCopied ? t('common.copied') : t('chat.copyRef')}
                     </button>
                   )}
                 </>
@@ -833,6 +838,8 @@ function Chat() {
 // 助手正文渲染：把 <kb …/> 文档引用与 <web …/> 联网引用变成可点胶囊，并把 <think> 抽成思考块。
 // 独立成组件是为了能用 useMemo（messages.map 里不能调 hook）。
 function AssistantMarkdown({ content, references, onOpenCitation, onOpenWiki }) {
+  // 只翻「胶囊」的 title 与占位文案；文档名、域名、wiki slug、正文内容一律原样
+  const { t } = useI18n();
   const { text, markers } = useMemo(
     () => extractCitations(stripIncompleteCitationTag(content || ''), references),
     [content, references]
@@ -858,7 +865,7 @@ function AssistantMarkdown({ content, references, onOpenCitation, onOpenWiki }) 
           <button
             type="button"
             onClick={() => onOpenWiki(slug)}
-            title={`打开 wiki 页面：${slug}`}
+            title={t('chat.openWikiPage', { slug })}
             className="mx-0.5 inline-flex items-center gap-0.5 rounded-md bg-violet-50 px-1 py-0.5 align-middle text-[11px] font-medium text-violet-700 active:scale-95"
           >
             <BookOpen className="h-3 w-3 shrink-0" />
@@ -889,11 +896,11 @@ function AssistantMarkdown({ content, references, onOpenCitation, onOpenWiki }) 
           <button
             type="button"
             onClick={() => onOpenCitation?.(marker, num)}
-            title={marker?.doc ? `引用：${marker.doc}` : `引用 ${num}`}
+            title={marker?.doc ? t('chat.citationTooltip', { doc: marker.doc }) : t('chat.citationNumber', { n: num })}
             className="mx-0.5 inline-flex max-w-[10rem] items-center gap-0.5 rounded-md bg-brand-50 px-1 py-0.5 align-middle text-[10px] font-medium text-brand-600 active:scale-95"
           >
             <BookOpen className="h-2.5 w-2.5 shrink-0" />
-            <span className="truncate">{truncateMiddle(marker?.doc || '引用')}</span>
+            <span className="truncate">{truncateMiddle(marker?.doc || t('chat.citationShort'))}</span>
           </button>
         );
       }
@@ -901,7 +908,7 @@ function AssistantMarkdown({ content, references, onOpenCitation, onOpenWiki }) 
         <a {...rest} href={href} target="_blank" rel="noopener noreferrer">{children}</a>
       );
     }
-  }), [byNumber, onOpenCitation, onOpenWiki]);
+  }), [byNumber, onOpenCitation, onOpenWiki, t]);
 
   return (
     <ReactMarkdown
@@ -919,6 +926,7 @@ function AssistantMarkdown({ content, references, onOpenCitation, onOpenWiki }) 
 
 // 思考过程折叠块：默认折叠，点击展开
 function ThinkingBlock({ text }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   return (
     <div className="mb-2 overflow-hidden rounded-lg bg-surface-soft">
@@ -927,8 +935,8 @@ function ThinkingBlock({ text }) {
         className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[11px] font-medium text-ink-muted"
       >
         <span className={clsx('text-[10px] transition-transform', open && 'rotate-90')}>▶</span>
-        思考过程
-        <span className="ml-auto text-[10px] opacity-60">{open ? '收起' : '展开'}</span>
+        {t('chat.thinkingProcess')}
+        <span className="ml-auto text-[10px] opacity-60">{open ? t('common.collapse') : t('common.expand')}</span>
       </button>
       {open && (
         <div className="max-h-48 overflow-y-auto border-t border-line px-2.5 py-2 text-xs leading-relaxed text-ink-muted">

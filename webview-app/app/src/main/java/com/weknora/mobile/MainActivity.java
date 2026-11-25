@@ -2,7 +2,9 @@ package com.weknora.mobile;
 
 import android.app.Activity;
 import android.content.ContentValues;
+import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.net.Uri;
 import android.os.Build;
@@ -10,6 +12,9 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.provider.Settings;
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
+import android.util.Base64;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -40,8 +45,16 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
+import java.security.KeyStore;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+
+import javax.crypto.AEADBadTagException;
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
 
 public class MainActivity extends AppCompatActivity {
     private WebView webView;
@@ -51,6 +64,24 @@ public class MainActivity extends AppCompatActivity {
     private boolean isDark = false;
     // 下载专用单线程池：串行落盘，避免多个大文件同时占用带宽与存储写
     private final ExecutorService downloadExecutor = Executors.newSingleThreadExecutor();
+
+    // ---------------- 凭据加密存储用到的常量 ----------------
+    // KeyStore 里保存的 AES 密钥别名。改名等价于「丢掉旧密文」——只在协议变更时升版本。
+    private static final String CRED_KEY_ALIAS = "weknora_cred_v1";
+    // 密文（Base64）落在这个私有 SharedPreferences 文件里；文件名只在设备上可见
+    private static final String CRED_PREFS_NAME = "weknora_secure";
+    private static final String CRED_PREF_KEY = "credentials";
+    private static final String CRED_TRANSFORMATION = "AES/GCM/NoPadding";
+    private static final String CRED_KEYSTORE_PROVIDER = "AndroidKeyStore";
+    // GCM 标准 IV 长度；128 bit tag 是 AndroidKeyStore 普遍支持的最大值
+    private static final int CRED_GCM_IV_BYTES = 12;
+    private static final int CRED_GCM_TAG_BITS = 128;
+
+    // 与前端约定的错误码，四个都是终态，前端据此决定 UI 文案
+    private static final String CODE_EMPTY = "EMPTY";
+    private static final String CODE_BAD_INPUT = "BAD_INPUT";
+    private static final String CODE_DECRYPT_FAILED = "DECRYPT_FAILED";
+    private static final String CODE_UNAVAILABLE = "UNAVAILABLE";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -344,6 +375,297 @@ public class MainActivity extends AppCompatActivity {
                 }
             });
         }
+
+        // ---------------- 凭据加密存储（保存登录密码）----------------
+        //
+        // 供前端调用：saveCredentials(json)，入参 {"email":"…","password":"…","baseUrl":"…"}。
+        //
+        // 三个方法都是**同步返回 JSON 字符串**，且永远不抛异常 —— WebView 的 JS 桥
+        // 一旦把 Java 异常抛回去，JS 侧拿到的是 "Error: Java exception was raised
+        // during method call" 这种无信息量的字符串，UI 无法区分「没保存」和「密钥库坏了」。
+        // 所以统一包成信封：
+        //   成功 {"ok":true,"data":{"email":…,"password":…,"baseUrl":…}}
+        //   失败 {"ok":false,"code":"EMPTY|BAD_INPUT|DECRYPT_FAILED|UNAVAILABLE","message":"可读说明"}
+        //
+        // 加密方案：AndroidKeyStore 里的 AES-256-GCM 密钥（别名 weknora_cred_v1，
+        // 不可导出），密文格式 IV(12B) + ciphertext(+128bit tag)，整体 Base64 后存进
+        // 私有 SharedPreferences（weknora_secure）。密钥由 GCM 自动随机生成 IV。
+        // API 要求：KeyGenParameterSpec / GCMParameterSpec 均为 API 23+，本项目 minSdk 24，
+        // 无需任何版本判断或 androidx.security 依赖（避免引入新依赖影响 CI 构建）。
+        //
+        // 安全边界（如实说明，不夸大）：
+        //   能防：SharedPreferences 文件被 adb pull / 云备份（allowBackup=true）/ 同机
+        //        其他应用读取；离线拿到密文也解不出明文（密钥不可导出，多数设备由
+        //        TEE / StrongBox 硬件保护，卸载重装即失效）。
+        //   不能防：root 设备；Frida / Xposed 注入本进程后直接读内存与明文参数；
+        //        debuggable 包被 jdwp 附加调试；输入法 / 无障碍服务 / 录屏抓取输入框内容；
+        //        用户主动点「显示密码」后被旁观或截屏。这些属于终端已被攻破的场景，
+        //        任何本地存储方案都挡不住。
+        @JavascriptInterface
+        public String saveCredentials(String json) {
+            if (json == null || json.trim().isEmpty()) {
+                return envelopeError(CODE_BAD_INPUT, "缺少凭据参数");
+            }
+            String email;
+            String password;
+            String baseUrl;
+            try {
+                JSONObject in = new JSONObject(json);
+                email = in.optString("email", "").trim();
+                // 密码不 trim：前后空格可能是密码的一部分
+                password = in.optString("password", "");
+                baseUrl = in.optString("baseUrl", "").trim();
+            } catch (Exception e) {
+                return envelopeError(CODE_BAD_INPUT, "凭据参数不是合法 JSON");
+            }
+            if (email.isEmpty() || password.isEmpty() || baseUrl.isEmpty()) {
+                return envelopeError(CODE_BAD_INPUT, "email / password / baseUrl 都不能为空");
+            }
+
+            JSONObject payload = new JSONObject();
+            try {
+                payload.put("email", email);
+                payload.put("password", password);
+                payload.put("baseUrl", baseUrl);
+            } catch (Exception e) {
+                return envelopeError(CODE_BAD_INPUT, "凭据序列化失败");
+            }
+
+            try {
+                String cipherText = encryptCredential(payload.toString());
+                boolean written = prefs()
+                    .edit()
+                    .putString(CRED_PREF_KEY, cipherText)
+                    .commit();
+                if (!written) {
+                    return envelopeError(CODE_UNAVAILABLE, "写入本地存储失败，请检查存储空间");
+                }
+                return envelopeOk(payload);
+            } catch (GeneralSecurityException e) {
+                return envelopeError(CODE_UNAVAILABLE, "系统密钥库不可用：" + describeError(e));
+            } catch (IOException e) {
+                return envelopeError(CODE_UNAVAILABLE, "系统密钥库不可用：" + describeError(e));
+            } catch (Exception e) {
+                return envelopeError(CODE_UNAVAILABLE, "保存失败：" + describeError(e));
+            }
+        }
+
+        // 供前端调用：loadCredentials()。无数据返回 EMPTY（「没保存过」不是错误）；
+        // 密文与当前密钥不匹配（卸载重装 / 系统重置密钥 / 换机恢复备份）返回
+        // DECRYPT_FAILED，并**主动删掉损坏的密文**，否则每次启动都会重复失败一次。
+        @JavascriptInterface
+        public String loadCredentials() {
+            String stored;
+            try {
+                stored = prefs().getString(CRED_PREF_KEY, null);
+            } catch (Exception e) {
+                return envelopeError(CODE_UNAVAILABLE, "无法读取本地存储：" + describeError(e));
+            }
+            if (stored == null || stored.trim().isEmpty()) {
+                return envelopeError(CODE_EMPTY, "尚未保存登录信息");
+            }
+
+            String plain;
+            try {
+                plain = decryptCredential(stored);
+            } catch (AEADBadTagException e) {
+                // GCM 校验失败：密钥换了或密文被改，这团数据已经永远解不开
+                clearStoredCredential();
+                return envelopeError(CODE_DECRYPT_FAILED,
+                    "已保存的登录信息无法解密（可能重装过应用或系统重置了密钥），已清除，请重新输入");
+            } catch (GeneralSecurityException e) {
+                // 含 KeyPermanentlyInvalidatedException / UnrecoverableKeyException 等
+                clearStoredCredential();
+                return envelopeError(CODE_DECRYPT_FAILED,
+                    "已保存的登录信息已失效（" + describeError(e) + "），已清除，请重新输入");
+            } catch (IOException e) {
+                return envelopeError(CODE_UNAVAILABLE, "系统密钥库不可用：" + describeError(e));
+            } catch (Exception e) {
+                clearStoredCredential();
+                return envelopeError(CODE_DECRYPT_FAILED, "解密失败，已清除，请重新输入");
+            }
+
+            try {
+                JSONObject data = new JSONObject(plain);
+                String email = data.optString("email", "");
+                String password = data.optString("password", "");
+                String baseUrl = data.optString("baseUrl", "");
+                if (email.isEmpty() || password.isEmpty() || baseUrl.isEmpty()) {
+                    clearStoredCredential();
+                    return envelopeError(CODE_DECRYPT_FAILED, "已保存的登录信息不完整，已清除");
+                }
+                JSONObject out = new JSONObject();
+                out.put("email", email);
+                out.put("password", password);
+                out.put("baseUrl", baseUrl);
+                return envelopeOk(out);
+            } catch (Exception e) {
+                clearStoredCredential();
+                return envelopeError(CODE_DECRYPT_FAILED, "已保存的登录信息已损坏，已清除");
+            }
+        }
+
+        // 供前端调用：clearCredentials()。同时删掉密文与密钥本身 ——
+        // 用户点「不保存密码」后，不该在设备上留下任何可被后续利用的密钥材料。
+        @JavascriptInterface
+        public String clearCredentials() {
+            try {
+                clearStoredCredential();
+                deleteCredentialKey();
+                return envelopeOk(null);
+            } catch (Exception e) {
+                return envelopeError(CODE_UNAVAILABLE, "清除失败：" + describeError(e));
+            }
+        }
+    }
+
+    // ================= 凭据加密存储的实现细节 =================
+    // 与上面 Bridge 里的三个 @JavascriptInterface 方法配套：Bridge 只负责
+    // 参数校验与信封组装，真正的加解密 / 存储都在这里。
+
+    // 私有 SharedPreferences（MODE_PRIVATE：仅本应用可读，其他应用即使同 uid 不同签名也读不到）
+    private SharedPreferences prefs() {
+        return getSharedPreferences(CRED_PREFS_NAME, Context.MODE_PRIVATE);
+    }
+
+    // 只删密文，保留密钥（解密失败时用：坏数据必须清掉，否则每次启动都白失败一次）
+    private void clearStoredCredential() {
+        try {
+            prefs().edit().remove(CRED_PREF_KEY).commit();
+        } catch (Exception ignored) {
+            // 清理失败不影响返回给前端的结论（前端已按失败处理，下次仍会重试）
+        }
+    }
+
+    // 删掉 KeyStore 里的密钥条目（用户主动「不保存密码」时用）
+    private static void deleteCredentialKey() {
+        try {
+            KeyStore keyStore = KeyStore.getInstance(CRED_KEYSTORE_PROVIDER);
+            keyStore.load(null);
+            if (keyStore.containsAlias(CRED_KEY_ALIAS)) {
+                keyStore.deleteEntry(CRED_KEY_ALIAS);
+            }
+        } catch (Exception ignored) {
+            // 密钥删不掉（极少数定制 ROM）：密文已在上面删掉，明文仍不外泄
+        }
+    }
+
+    // 取已有密钥，没有就生成一把。KeyGenParameterSpec 需要 API 23+，minSdk 24 满足。
+    // 参数含义：
+    //   PURPOSE_ENCRYPT|DECRYPT —— 只做加解密，不能当签名密钥复用
+    //   BLOCK_MODE_GCM + ENCRYPTION_PADDING_NONE —— GCM 是 AEAD，自带完整性校验，
+    //     不需要（也不允许）额外填充
+    //   setKeySize(256) —— AES-256，AndroidKeyStore 自 API 23 起支持
+    //   setRandomizedEncryptionRequired(true) —— 强制每次加密由系统生成随机 IV，
+    //     禁止调用方自选 IV（防 IV 复用导致 GCM 灾难性失效）
+    // 密钥不可导出（getEncoded() 返回 null），多数设备由 TEE/StrongBox 托管。
+    private static SecretKey getOrCreateCredentialKey() throws GeneralSecurityException, IOException {
+        KeyStore keyStore = KeyStore.getInstance(CRED_KEYSTORE_PROVIDER);
+        keyStore.load(null);
+        if (keyStore.containsAlias(CRED_KEY_ALIAS)) {
+            KeyStore.Entry entry = keyStore.getEntry(CRED_KEY_ALIAS, null);
+            if (entry instanceof KeyStore.SecretKeyEntry) {
+                return ((KeyStore.SecretKeyEntry) entry).getSecretKey();
+            }
+            // 别名存在但不是 SecretKey（历史遗留/被篡改）：删掉重建，避免永久不可用
+            keyStore.deleteEntry(CRED_KEY_ALIAS);
+        }
+        KeyGenerator generator = KeyGenerator.getInstance(
+            KeyProperties.KEY_ALGORITHM_AES, CRED_KEYSTORE_PROVIDER);
+        KeyGenParameterSpec spec = new KeyGenParameterSpec.Builder(
+            CRED_KEY_ALIAS,
+            KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setKeySize(256)
+            .setRandomizedEncryptionRequired(true)
+            .build();
+        generator.init(spec);
+        return generator.generateKey();
+    }
+
+    // 加密：返回 Base64( IV(12B) || ciphertext )，可直接存 SharedPreferences
+    private static String encryptCredential(String plain) throws GeneralSecurityException, IOException {
+        SecretKey key = getOrCreateCredentialKey();
+        Cipher cipher = Cipher.getInstance(CRED_TRANSFORMATION);
+        cipher.init(Cipher.ENCRYPT_MODE, key); // 随机 IV 由 KeyStore 生成
+        byte[] iv = cipher.getIV();
+        if (iv == null || iv.length != CRED_GCM_IV_BYTES) {
+            // setRandomizedEncryptionRequired(true) 下不该发生；防御性检查避免写出不可解的密文
+            throw new GeneralSecurityException("生成的 IV 长度异常");
+        }
+        byte[] cipherText = cipher.doFinal(plain.getBytes(StandardCharsets.UTF_8));
+        byte[] blob = new byte[iv.length + cipherText.length];
+        System.arraycopy(iv, 0, blob, 0, iv.length);
+        System.arraycopy(cipherText, 0, blob, iv.length, cipherText.length);
+        return Base64.encodeToString(blob, Base64.NO_WRAP);
+    }
+
+    // 解密：入参是 encryptCredential 产出的 Base64。
+    // 密钥被系统丢弃（卸载重装 / 换机恢复备份 / 系统重置）时会抛出
+    // AEADBadTagException 或 KeyPermanentlyInvalidatedException —— 调用方据此返回
+    // DECRYPT_FAILED 并清掉密文。
+    private static String decryptCredential(String base64) throws GeneralSecurityException, IOException {
+        byte[] blob;
+        try {
+            blob = Base64.decode(base64, Base64.NO_WRAP);
+        } catch (IllegalArgumentException e) {
+            throw new GeneralSecurityException("密文不是合法 Base64");
+        }
+        if (blob.length <= CRED_GCM_IV_BYTES) {
+            throw new GeneralSecurityException("密文长度异常");
+        }
+        KeyStore keyStore = KeyStore.getInstance(CRED_KEYSTORE_PROVIDER);
+        keyStore.load(null);
+        if (!keyStore.containsAlias(CRED_KEY_ALIAS)) {
+            // 密钥随卸载一起消失，但 allowBackup=true 可能把密文恢复了回来
+            throw new GeneralSecurityException("设备上已无对应密钥");
+        }
+        KeyStore.Entry entry = keyStore.getEntry(CRED_KEY_ALIAS, null);
+        if (!(entry instanceof KeyStore.SecretKeyEntry)) {
+            throw new GeneralSecurityException("密钥条目类型异常");
+        }
+        SecretKey key = ((KeyStore.SecretKeyEntry) entry).getSecretKey();
+        Cipher cipher = Cipher.getInstance(CRED_TRANSFORMATION);
+        cipher.init(Cipher.DECRYPT_MODE, key,
+            new GCMParameterSpec(CRED_GCM_TAG_BITS, blob, 0, CRED_GCM_IV_BYTES));
+        byte[] plain = cipher.doFinal(blob, CRED_GCM_IV_BYTES, blob.length - CRED_GCM_IV_BYTES);
+        return new String(plain, StandardCharsets.UTF_8);
+    }
+
+    // 成功信封。data 为 null 时只返回 {"ok":true}（clear 用）。
+    private static String envelopeOk(JSONObject data) {
+        try {
+            JSONObject out = new JSONObject();
+            out.put("ok", true);
+            if (data != null) out.put("data", data);
+            return out.toString();
+        } catch (Exception e) {
+            // JSONObject 序列化异常几乎不可能，兜底成一个合法信封而不是抛给 JS
+            return "{\"ok\":false,\"code\":\"UNAVAILABLE\",\"message\":\"结果序列化失败\"}";
+        }
+    }
+
+    // 失败信封：code 必须是上面四个枚举之一，message 供 UI 直接展示
+    private static String envelopeError(String code, String message) {
+        try {
+            JSONObject out = new JSONObject();
+            out.put("ok", false);
+            out.put("code", code == null ? CODE_UNAVAILABLE : code);
+            if (message != null && !message.isEmpty()) out.put("message", message);
+            return out.toString();
+        } catch (Exception e) {
+            return "{\"ok\":false,\"code\":\"UNAVAILABLE\"}";
+        }
+    }
+
+    // 异常 → 可读说明（KeyStore 的异常 message 有时只有 "Invalid keystore format" 之类，
+    // 但至少比空串有用；为空时退化到类名）
+    private static String describeError(Throwable t) {
+        if (t == null) return "未知错误";
+        String msg = t.getMessage();
+        if (msg == null || msg.trim().isEmpty()) return t.getClass().getSimpleName();
+        return msg;
     }
 
     // 下载请求体：加鉴权头，POST 时写 JSON body，200 才落盘（错误响应不生成残缺文件）

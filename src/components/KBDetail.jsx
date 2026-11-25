@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
+import { useI18n } from '../i18n/I18nContext.jsx';
+import { noticeText } from '../utils/noticeText.js';
 import { KB, Knowledge, Tag, Session } from '../api/endpoints.js';
 import KBSettings from './KBSettings.jsx';
 import WikiView from './WikiView.jsx';
@@ -24,34 +26,70 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
-const tabs = (isFaq) => [
-  { key: 'docs', label: isFaq ? 'FAQ' : '文档', icon: isFaq ? HelpCircle : FileText },
-  { key: 'wiki', label: 'Wiki', icon: BookOpen },
-  { key: 'graph', label: '图谱', icon: Share2 },
-  { key: 'search', label: '搜索', icon: Search },
-  { key: 'eval', label: '评估', icon: BarChart3 },
-  { key: 'settings', label: '设置', icon: Settings }
+// 标签页：key 是内部状态枚举（不能翻），label 现场取字典
+const tabs = (isFaq, t) => [
+  { key: 'docs', label: isFaq ? t('kbDetail.tabFaq') : t('kbDetail.tabDocs'), icon: isFaq ? HelpCircle : FileText },
+  { key: 'wiki', label: t('kbDetail.tabWiki'), icon: BookOpen },
+  { key: 'graph', label: t('kbDetail.tabGraph'), icon: Share2 },
+  { key: 'search', label: t('kbDetail.tabSearch'), icon: Search },
+  { key: 'eval', label: t('kbDetail.tabEval'), icon: BarChart3 },
+  { key: 'settings', label: t('kbDetail.tabSettings'), icon: Settings }
 ];
 
+// value 是后端枚举（'' / file / url / manual），不能翻；label 走字典
 const SOURCE_OPTIONS = [
-  { value: '', label: '全部来源' },
-  { value: 'file', label: '文件上传' },
-  { value: 'url', label: '网页链接' },
-  { value: 'manual', label: '手动创建' }
+  { value: '', labelKey: 'kbDetail.sourceAll' },
+  { value: 'file', labelKey: 'kbDetail.sourceFile' },
+  { value: 'url', labelKey: 'kbDetail.sourceUrl' },
+  { value: 'manual', labelKey: 'kbDetail.sourceManual' }
 ];
 
+// 同上：value 是 parse_status 的查询枚举
 const STATUS_OPTIONS = [
-  { value: '', label: '全部状态' },
-  { value: 'parsed', label: '已解析' },
-  { value: 'parsing', label: '解析中' },
-  { value: 'failed', label: '失败' },
-  { value: 'pending', label: '待解析' }
+  { value: '', labelKey: 'kbDetail.statusAll' },
+  { value: 'parsed', labelKey: 'kbDetail.statusParsed' },
+  { value: 'parsing', labelKey: 'kbDetail.statusParsing' },
+  { value: 'failed', labelKey: 'kbDetail.statusFailed' },
+  { value: 'pending', labelKey: 'kbDetail.statusPending' }
 ];
+
+// 解析状态 → 字典键。未知状态用「未知」；字典缺键时回退 utils/parseStatus.js 的中文标签
+const PARSE_STATUS_KEYS = {
+  pending: 'kbDetail.parseStatusPending',
+  processing: 'kbDetail.parseStatusProcessing',
+  finalizing: 'kbDetail.parseStatusFinalizing',
+  completed: 'kbDetail.parseStatusCompleted',
+  failed: 'kbDetail.parseStatusFailed',
+  cancelled: 'kbDetail.parseStatusCancelled',
+  deleting: 'kbDetail.parseStatusDeleting'
+};
+
+// 文档来源 → 字典键（faq 复用 FAQ 标签）
+const SOURCE_KEYS = {
+  file: 'kbDetail.sourceFile',
+  url: 'kbDetail.sourceUrl',
+  manual: 'kbDetail.sourceManual',
+  faq: 'kbDetail.tabFaq'
+};
+
+function parseStatusText(status, t) {
+  const key = PARSE_STATUS_KEYS[status] || 'kbDetail.parseStatusUnknown';
+  const value = t(key);
+  return value === key ? statusMeta(status).label : value;
+}
+
+function sourceTypeText(type, t) {
+  const key = SOURCE_KEYS[type];
+  if (!key) return SOURCE_LABEL[type] || type || t('kbDetail.parseStatusUnknown');
+  const value = t(key);
+  return value === key ? (SOURCE_LABEL[type] || type) : value;
+}
 
 function KBDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useI18n();
   const [activeTab, setActiveTab] = useState('docs');
 
   const { data: kbRes, loading: kbLoading, error: kbError, run: refreshKb, setData: setKbRes } = useAsync(() => KB.detail(id), [id]);
@@ -119,7 +157,7 @@ function KBDetail() {
       setHasMore(items.length > 0 && (append ? docs.length + items.length : items.length) < total);
       return items;
     } catch (err) {
-      setListError(err.message || '加载失败');
+      setListError({ raw: err.message, fallbackKey: 'common.loadFailed' });
       return [];
     }
   }, [id, docs.length]);
@@ -234,7 +272,7 @@ function KBDetail() {
       const res = await KB.hybridSearch(id, { query_text: searchQuery });
       setSearchResults(res.data || []);
     } catch (err) {
-      setSearchError(err.message || '搜索失败');
+      setSearchError({ raw: err.message, fallbackKey: 'common.searchFailed' });
     } finally {
       setSearching(false);
     }
@@ -251,7 +289,7 @@ function KBDetail() {
 
   const handleBatchDelete = async () => {
     if (selectedDocs.size === 0) return;
-    if (!window.confirm(`确定删除选中的 ${selectedDocs.size} 个文档？`)) return;
+    if (!window.confirm(t('kbDetail.confirmBatchDelete', { n: selectedDocs.size }))) return;
     setBatchDeleting(true);
     const ids = Array.from(selectedDocs);
     try {
@@ -266,13 +304,13 @@ function KBDetail() {
         const results = await Promise.allSettled(ids.map((docId) => Knowledge.remove(docId)));
         const failed = results.filter((r) => r.status === 'rejected').length;
         if (failed === ids.length) throw err;
-        if (failed > 0) setNotice(`已删除 ${ids.length - failed} 个，${failed} 个删除失败`);
+        if (failed > 0) setNotice({ key: 'kbDetail.partialDelete', params: { ok: ids.length - failed, failed } });
       }
       setSelectedDocs(new Set());
       setBatchMode(false);
       await handleRefresh();
     } catch (err) {
-      alert(err.message || '批量删除失败');
+      alert(err.message || t('kbDetail.batchDeleteFailed'));
     } finally {
       setBatchDeleting(false);
     }
@@ -289,12 +327,12 @@ function KBDetail() {
       await Knowledge.batchReparse(id, ids);
       // 乐观更新为 pending，避免用户以为没反应；随后轮询会校正为真实状态
       setDocs((prev) => prev.map((d) => (ids.includes(d.id) ? { ...d, parse_status: 'pending' } : d)));
-      setNotice(`已提交 ${ids.length} 个文档的重新解析任务`);
+      setNotice({ key: 'kbDetail.batchReparseNotice', params: { n: ids.length } });
       setSelectedDocs(new Set());
       setBatchMode(false);
       silentRefresh();
     } catch (err) {
-      alert(err.message || '批量重新解析失败');
+      alert(err.message || t('kbDetail.batchReparseFailed'));
     } finally {
       setBatchParsing(false);
     }
@@ -307,10 +345,10 @@ function KBDetail() {
       .filter((d) => selectedDocs.has(d.id) && isInFlight(d.parse_status))
       .map((d) => d.id);
     if (targets.length === 0) {
-      alert('选中的文档中没有正在解析的任务（仅 pending / 解析中 / 收尾中 可停止）');
+      alert(t('kbDetail.noStoppable'));
       return;
     }
-    if (!window.confirm(`停止选中的 ${targets.length} 个解析任务？已生成的分块与索引会保留，可随时重新解析。`)) return;
+    if (!window.confirm(t('kbDetail.confirmStopTasks', { n: targets.length }))) return;
     setBatchStopping(true);
     setNotice(null);
     try {
@@ -318,12 +356,14 @@ function KBDetail() {
       const ok = results.filter((r) => r.status === 'fulfilled').length;
       const failed = targets.length - ok;
       setDocs((prev) => prev.map((d) => (targets.includes(d.id) ? { ...d, parse_status: 'cancelled' } : d)));
-      setNotice(`已停止 ${ok} 个解析任务${failed ? `，${failed} 个失败` : ''}`);
+      setNotice(failed
+        ? { key: 'kbDetail.stopNoticePartial', params: { ok, failed } }
+        : { key: 'kbDetail.stopNotice', params: { ok } });
       setSelectedDocs(new Set());
       setBatchMode(false);
       silentRefresh();
     } catch (err) {
-      alert(err.message || '停止解析失败');
+      alert(err.message || t('kbDetail.stopFailed'));
     } finally {
       setBatchStopping(false);
     }
@@ -335,13 +375,13 @@ function KBDetail() {
     const items = docs.filter((d) => selectedDocs.has(d.id));
     if (items.length === 0) return;
     if (items.length > 200) {
-      alert(`单次最多下载 200 个文档，当前已选 ${items.length} 个，请分批下载。`);
+      alert(t('kbDetail.downloadTooMany', { n: items.length }));
       return;
     }
     const totalBytes = items.reduce((n, d) => n + (d.file_size || 0), 0);
     if (totalBytes > 300 * 1024 * 1024) {
       const ok = window.confirm(
-        `已选 ${items.length} 个文档，原始文件合计约 ${formatBytes(totalBytes)}，打包下载可能较慢且占用较多流量。继续？`
+        t('kbDetail.confirmBigDownload', { n: items.length, size: formatBytes(totalBytes) })
       );
       if (!ok) return;
     }
@@ -349,18 +389,20 @@ function KBDetail() {
     setNotice(null);
     try {
       const stamp = new Date().toISOString().slice(0, 10);
-      const fileName = `${safeFileName(kb?.name, '知识库')}_${items.length}份_${stamp}.zip`;
+      const fileName = `${safeFileName(kb?.name, t('kbDetail.kbFallbackName'))}_${items.length}_${stamp}.zip`;
       const res = await saveFile({
         path: Knowledge.batchDownloadPath(id),
         method: 'POST',
         body: { ids: items.map((d) => d.id) },
         fileName
       });
-      setNotice(res.via === 'native' ? `已保存到 ${res.message}` : `已下载 ${res.fileName}`);
+      setNotice(res.via === 'native'
+        ? { key: 'kbDetail.savedTo', params: { path: res.message } }
+        : { key: 'kbDetail.downloaded', params: { file: res.fileName } });
       setSelectedDocs(new Set());
       setBatchMode(false);
     } catch (err) {
-      alert('下载失败：' + (err.message || '未知错误'));
+      alert(t('kbDetail.downloadFailed', { detail: err.message || t('common.unknownError') }));
     } finally {
       setBatchDownloading(false);
     }
@@ -372,7 +414,7 @@ function KBDetail() {
       await Knowledge.cancelParse(doc.id);
       setDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, parse_status: 'cancelled' } : d)));
     } catch (err) {
-      alert(err.message || '停止解析失败');
+      alert(err.message || t('kbDetail.stopFailed'));
     }
   };
 
@@ -381,12 +423,12 @@ function KBDetail() {
       await Knowledge.reparse(doc.id);
       setDocs((prev) => prev.map((d) => (d.id === doc.id ? { ...d, parse_status: 'pending' } : d)));
     } catch (err) {
-      alert(err.message || '重新解析失败');
+      alert(err.message || t('kbDetail.reparseFailed'));
     }
   };
 
   const handleDelete = async () => {
-    if (!window.confirm('确定删除该知识库？知识库下所有知识将一并删除。')) return;
+    if (!window.confirm(t('kbDetail.confirmDeleteKb'))) return;
     setDeleting(true);
     try {
       await KB.remove(id);
@@ -400,14 +442,17 @@ function KBDetail() {
   const handleStartChat = async () => {
     try {
       // WeKnora 会话创建只接受 title/description，知识库在每次提问时动态传入
-      const res = await Session.create({ title: kb?.name || '新会话' });
+      const res = await Session.create({ title: kb?.name || t('chat.newSession') });
       navigate(`/session/${res.data.id}`, { state: { knowledge_base_id: id } });
     } catch (err) {
-      alert('创建对话失败：' + (err.message || '未知错误'));
+      alert(t('kbDetail.startChatFailed', { detail: err.message || t('common.unknownError') }));
     }
   };
 
   const error = kbError || (activeTab === 'docs' && listError);
+  // 提示/错误有两种形态：useAsync 抛出的服务端原文（string，原样显示）、
+  // 以及只存了 key 的 notice 对象（渲染时才翻译，切语言会跟着变）。
+  const textOf = (value) => (typeof value === 'string' ? value : noticeText(value, t));
 
   // 选中项里可被「停止解析」的数量（只有 in-flight 状态能被取消）
   const stoppableCount = batchMode
@@ -421,14 +466,14 @@ function KBDetail() {
     <div className="p-4">
       {kbLoading && (
         <div className="flex items-center justify-center py-12 text-gray-500">
-          <Loader2 className="mr-2 h-5 w-5 animate-spin" /> 加载中…
+          <Loader2 className="mr-2 h-5 w-5 animate-spin" /> {t('common.loading')}
         </div>
       )}
 
       {error && (
         <div className="mb-4 flex items-start gap-2 rounded-xl bg-red-50 p-3 text-sm text-red-700">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          <div>{error}</div>
+          <div>{textOf(error)}</div>
         </div>
       )}
 
@@ -440,13 +485,14 @@ function KBDetail() {
                 <Database className="h-6 w-6" />
               </div>
               <div className="min-w-0 flex-1">
+                {/* kb.name / kb.description 是用户数据，绝不进字典 */}
                 <h2 className="text-lg font-bold text-gray-900">{kb.name}</h2>
-                <p className="text-xs text-gray-500">{kb.description || '暂无描述'}</p>
+                <p className="text-xs text-gray-500">{kb.description || t('common.noDescription')}</p>
                 <div className="mt-2 flex flex-wrap gap-2 text-xs text-gray-500">
-                  <span className="rounded-lg bg-gray-100 px-2 py-1">{kb.knowledge_count || docsTotal || 0} 文档</span>
-                  <span className="rounded-lg bg-gray-100 px-2 py-1">{kb.chunk_count || 0} 分块</span>
+                  <span className="rounded-lg bg-gray-100 px-2 py-1">{t('kbDetail.docCount', { n: kb.knowledge_count || docsTotal || 0 })}</span>
+                  <span className="rounded-lg bg-gray-100 px-2 py-1">{t('kbDetail.chunkCount', { n: kb.chunk_count || 0 })}</span>
                   {wikiEnabled && <span className="rounded-lg bg-purple-100 px-2 py-1 text-purple-700">Wiki</span>}
-                  {graphEnabled && <span className="rounded-lg bg-green-100 px-2 py-1 text-green-700">图谱</span>}
+                  {graphEnabled && <span className="rounded-lg bg-green-100 px-2 py-1 text-green-700">{t('kbDetail.tabGraph')}</span>}
                 </div>
               </div>
             </div>
@@ -454,12 +500,12 @@ function KBDetail() {
               onClick={handleStartChat}
               className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 py-2.5 text-sm font-medium text-white shadow-sm hover:from-blue-700 hover:to-indigo-700 active:scale-95 transition-transform"
             >
-              <MessageSquare className="h-4 w-4" /> 开始对话
+              <MessageSquare className="h-4 w-4" /> {t('kbDetail.startChat')}
             </button>
           </div>
 
           <div className="mb-4 flex rounded-2xl bg-white p-1 shadow-sm">
-            {tabs(isFaq).map((tab) => {
+            {tabs(isFaq, t).map((tab) => {
               const Icon = tab.icon;
               // Hide wiki/graph tabs if not enabled
               if (tab.key === 'wiki' && !wikiEnabled) return null;
@@ -491,13 +537,13 @@ function KBDetail() {
                     type="text"
                     value={docParams.keyword}
                     onChange={(e) => handleFilterChange('keyword', e.target.value)}
-                    placeholder="搜索文档…"
+                    placeholder={t('kbDetail.searchDocsPlaceholder')}
                     className="min-w-0 flex-1 rounded-xl border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                   <button
                     onClick={() => setShowFilters(!showFilters)}
                     className={clsx('shrink-0 rounded-xl p-2 shadow-sm', showFilters ? 'bg-blue-50 text-blue-600' : 'bg-white text-gray-600')}
-                    title="筛选"
+                    title={t('kbDetail.filter')}
                   >
                     <Filter className="h-5 w-5" />
                   </button>
@@ -508,7 +554,7 @@ function KBDetail() {
                       'relative shrink-0 rounded-xl p-2 shadow-sm disabled:opacity-50',
                       polling ? 'bg-blue-50 text-blue-600' : 'bg-white text-gray-600'
                     )}
-                    title={polling ? '正在自动刷新解析进度（点击立即刷新）' : '刷新'}
+                    title={polling ? t('kbDetail.refreshPolling') : t('common.refresh')}
                   >
                     <RefreshCw className={clsx('h-5 w-5', (refreshing || polling) && 'animate-spin')} />
                   </button>
@@ -521,7 +567,9 @@ function KBDetail() {
                       className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-gradient-to-br from-brand-600 to-brand-400 px-3 py-2.5 text-sm font-medium text-white shadow-brand-lg hover:opacity-90 active:scale-[0.98]"
                     >
                       <Upload className="h-4 w-4" />
-                      {uploadSummary.busy ? `上传中 ${uploadSummary.uploading + uploadSummary.queued}` : '上传文件'}
+                      {uploadSummary.busy
+                        ? t('kbDetail.uploading', { n: uploadSummary.uploading + uploadSummary.queued })
+                        : t('kbDetail.upload')}
                       <input
                         ref={fileInputRef}
                         type="file"
@@ -535,7 +583,7 @@ function KBDetail() {
                     onClick={() => setShowCreateModal(true)}
                     className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-white px-3 py-2.5 text-sm font-medium text-brand-600 shadow-card hover:bg-surface-subtle active:scale-[0.98]"
                   >
-                    <Plus className="h-4 w-4" /> {isFaq ? '新建 FAQ' : '添加知识'}
+                    <Plus className="h-4 w-4" /> {isFaq ? t('kbDetail.newFaq') : t('kbDetail.addKnowledge')}
                   </button>
                 </div>
               </div>
@@ -546,7 +594,7 @@ function KBDetail() {
 
               {notice && (
                 <div className="flex items-start gap-2 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-700">
-                  <span className="flex-1">{notice}</span>
+                  <span className="flex-1">{textOf(notice)}</span>
                   <button type="button" onClick={() => setNotice(null)} className="shrink-0 text-emerald-600">
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -571,14 +619,14 @@ function KBDetail() {
                       onChange={(e) => handleFilterChange('source', e.target.value)}
                       className="rounded-xl border border-gray-300 px-2 py-2 text-xs"
                     >
-                      {SOURCE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      {SOURCE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{t(o.labelKey)}</option>)}
                     </select>
                     <select
                       value={docParams.parse_status}
                       onChange={(e) => handleFilterChange('parse_status', e.target.value)}
                       className="rounded-xl border border-gray-300 px-2 py-2 text-xs"
                     >
-                      {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{t(o.labelKey)}</option>)}
                     </select>
                   </div>
                   {tags.length > 0 && (
@@ -587,7 +635,8 @@ function KBDetail() {
                       onChange={(e) => handleFilterChange('tag_ids', e.target.value)}
                       className="w-full rounded-xl border border-gray-300 px-2 py-2 text-xs"
                     >
-                      <option value="">全部标签</option>
+                      <option value="">{t('kbDetail.allTags')}</option>
+                      {/* tag.name 是用户数据，原样展示 */}
                       {tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
                     </select>
                   )}
@@ -612,16 +661,16 @@ function KBDetail() {
                     }}
                     className="w-full rounded-xl bg-gray-100 py-2 text-xs font-medium text-gray-700"
                   >
-                    重置筛选
+                    {t('kbDetail.resetFilters')}
                   </button>
                 </div>
               )}
 
               <div className="flex items-center justify-between">
                 <p className="text-xs text-gray-500">
-                  共 {docsTotal} 条，已加载 {docs.length} 条
+                  {t('common.count', { n: docsTotal })} · {t('kbDetail.loadedCount', { n: docs.length })}
                   {polling && (
-                    <span className="ml-1.5 text-blue-600">{stalled ? '· 后台解析中（已降频）' : '· 解析进度自动刷新中'}</span>
+                    <span className="ml-1.5 text-blue-600">{stalled ? t('kbDetail.pollingStalled') : t('kbDetail.pollingActive')}</span>
                   )}
                 </p>
                 <button
@@ -631,7 +680,7 @@ function KBDetail() {
                   }}
                   className={clsx('text-xs font-medium', batchMode ? 'text-blue-600' : 'text-gray-600')}
                 >
-                  {batchMode ? '完成' : '批量'}
+                  {batchMode ? t('kbDetail.batchDone') : t('kbDetail.batch')}
                 </button>
               </div>
 
@@ -639,8 +688,8 @@ function KBDetail() {
                 <div className="space-y-2 rounded-xl bg-blue-50 p-2">
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-blue-700">
-                      已选 {selectedDocs.size} 项
-                      {stoppableCount > 0 && ` · ${stoppableCount} 项解析中`}
+                      {t('kbDetail.selected', { n: selectedDocs.size })}
+                      {stoppableCount > 0 && t('kbDetail.selectedParsing', { n: stoppableCount })}
                     </span>
                   </div>
                   {/* 四个动作在手机上一行放不下，用 2×2 网格；每格高度一致，避免误触 */}
@@ -651,7 +700,7 @@ function KBDetail() {
                       className="flex items-center justify-center gap-1 rounded-lg bg-brand-600 px-2 py-1.5 text-xs font-medium text-white disabled:opacity-50"
                     >
                       {batchParsing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-                      重新解析
+                      {t('kbDetail.reparse')}
                     </button>
                     <button
                       onClick={handleBatchCancelParse}
@@ -659,7 +708,7 @@ function KBDetail() {
                       className="flex items-center justify-center gap-1 rounded-lg bg-amber-500 px-2 py-1.5 text-xs font-medium text-white disabled:opacity-40"
                     >
                       {batchStopping ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Ban className="h-3.5 w-3.5" />}
-                      停止解析
+                      {t('kbDetail.stopParse')}
                     </button>
                     <button
                       onClick={handleBatchDownload}
@@ -667,7 +716,7 @@ function KBDetail() {
                       className="flex items-center justify-center gap-1 rounded-lg bg-surface-subtle px-2 py-1.5 text-xs font-medium text-gray-700 disabled:opacity-50"
                     >
                       {batchDownloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                      下载 ZIP
+                      {t('kbDetail.downloadZip')}
                     </button>
                     <button
                       onClick={handleBatchDelete}
@@ -675,7 +724,7 @@ function KBDetail() {
                       className="flex items-center justify-center gap-1 rounded-lg bg-red-600 px-2 py-1.5 text-xs font-medium text-white disabled:opacity-50"
                     >
                       {batchDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                      删除
+                      {t('common.delete')}
                     </button>
                   </div>
                 </div>
@@ -710,12 +759,12 @@ function KBDetail() {
                         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-gray-500">
                           <span className={clsx('inline-flex items-center gap-1 rounded-lg px-1.5 py-0.5 font-medium', meta.chip)}>
                             {inFlight && <Loader2 className="h-3 w-3 animate-spin" />}
-                            {meta.label}
+                            {parseStatusText(doc.parse_status, t)}
                           </span>
-                          <span>{SOURCE_LABEL[doc.type] || doc.type}</span>
+                          <span>{sourceTypeText(doc.type, t)}</span>
                           {doc.file_size ? <span>{formatBytes(doc.file_size)}</span> : null}
                           {doc.parse_status === 'finalizing' && doc.pending_subtasks_count > 0 && (
-                            <span>子任务剩余 {doc.pending_subtasks_count}</span>
+                            <span>{t('kbDetail.subtasksLeft', { n: doc.pending_subtasks_count })}</span>
                           )}
                         </div>
                         {/* 失败原因直接摊在列表里：此前只能进详情页且详情页也不显示，
@@ -732,7 +781,7 @@ function KBDetail() {
                         <button
                           onClick={(e) => { e.stopPropagation(); handleStopDoc(doc); }}
                           className="shrink-0 rounded-lg bg-amber-50 p-1.5 text-amber-600 active:scale-90"
-                          title="停止解析"
+                          title={t('kbDetail.stopParse')}
                         >
                           <Ban className="h-4 w-4" />
                         </button>
@@ -741,7 +790,7 @@ function KBDetail() {
                         <button
                           onClick={(e) => { e.stopPropagation(); handleReparseDoc(doc); }}
                           className="shrink-0 rounded-lg bg-brand-50 p-1.5 text-brand-600 active:scale-90"
-                          title="重新解析"
+                          title={t('kbDetail.reparse')}
                         >
                           <RotateCcw className="h-4 w-4" />
                         </button>
@@ -754,7 +803,7 @@ function KBDetail() {
 
               {loadingMore && (
                 <div className="py-3 text-center text-sm text-gray-500">
-                  <Loader2 className="mx-auto mb-1 h-4 w-4 animate-spin" /> 加载中…
+                  <Loader2 className="mx-auto mb-1 h-4 w-4 animate-spin" /> {t('common.loading')}
                 </div>
               )}
 
@@ -764,16 +813,16 @@ function KBDetail() {
                   onClick={loadMore}
                   className="w-full rounded-xl bg-white py-2.5 text-sm font-medium text-gray-700 shadow-sm"
                 >
-                  加载更多
+                  {t('kbDetail.loadMore')}
                 </button>
               )}
 
               {!hasMore && docs.length > 0 && (
-                <div className="py-3 text-center text-xs text-gray-400">已加载全部 {docsTotal} 条文档</div>
+                <div className="py-3 text-center text-xs text-gray-400">{t('kbDetail.allLoaded', { n: docsTotal })}</div>
               )}
 
               {!loadingMore && !listError && docs.length === 0 && (
-                <div className="py-8 text-center text-sm text-gray-400">暂无文档</div>
+                <div className="py-8 text-center text-sm text-gray-400">{t('kbDetail.noDocs')}</div>
               )}
             </div>
           )}
@@ -788,7 +837,7 @@ function KBDetail() {
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="输入问题进行混合搜索…"
+                  placeholder={t('kbDetail.hybridSearchPlaceholder')}
                   className="flex-1 rounded-xl border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
                 <button
@@ -801,11 +850,11 @@ function KBDetail() {
               </form>
 
               {searchError && (
-                <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{searchError}</div>
+                <div className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{textOf(searchError)}</div>
               )}
 
               {searchResults && searchResults.length === 0 && (
-                <div className="py-8 text-center text-sm text-gray-500">未找到相关结果</div>
+                <div className="py-8 text-center text-sm text-gray-500">{t('kbDetail.noResults')}</div>
               )}
 
               <div className="space-y-3">
@@ -813,7 +862,7 @@ function KBDetail() {
                   <div key={item.id} className="rounded-2xl bg-white p-4 shadow-sm">
                     <div className="mb-2 flex items-center justify-between">
                       <span className="text-xs font-medium text-blue-600">#{idx + 1}</span>
-                      <span className="text-xs text-gray-400">score {item.score?.toFixed(3)}</span>
+                      <span className="text-xs text-gray-400">{t('kbDetail.score', { value: item.score?.toFixed(3) })}</span>
                     </div>
                     <h4 className="mb-1 font-semibold text-gray-900">{item.knowledge_title}</h4>
                     <p className="text-sm text-gray-600 line-clamp-4">{item.content}</p>
@@ -839,7 +888,7 @@ function KBDetail() {
                 disabled={deleting}
                 className="flex w-full items-center justify-center gap-2 rounded-xl bg-red-50 py-3 text-sm font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
               >
-                <Trash2 className="h-4 w-4" /> {deleting ? '删除中' : '删除知识库'}
+                <Trash2 className="h-4 w-4" /> {deleting ? t('kbDetail.deleting') : t('kbDetail.deleteKb')}
               </button>
             </div>
           )}

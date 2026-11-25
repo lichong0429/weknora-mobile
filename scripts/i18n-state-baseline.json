@@ -1,0 +1,18 @@
+{
+  "note": "已知历史债务基线：锚点 = 文件 :: 写入调用名 :: t() 的 key（不含行号，行号漂移不影响）。修完后用 --update-baseline 收窄。",
+  "generatedAt": "2026-11-25",
+  "anchors": {
+    "src/components/Chat.jsx::setMessages::chat.errorTag": 1,
+    "src/components/Chat.jsx::setMessages::chat.noAnswerHeading": 1,
+    "src/components/Chat.jsx::setMessages::chat.noAnswerHint": 1,
+    "src/components/Chat.jsx::setMessages::chat.requestFailed": 1,
+    "src/components/Chat.jsx::setMessages::chat.waiting": 1,
+    "src/components/Chat.jsx::setNoAnswerReport::chat.clientError": 1,
+    "src/components/Chat.jsx::setRefChunk::common.loadFailed": 1,
+    "src/components/Chat.jsx::setStreamError::chat.selectKbFirst": 1
+  },
+  "exemptions": {},
+  "todo": {
+    "src/components/Chat.jsx": "剩余唯一债务 8 处：其中 4 处写在模板字符串 ${t(...)} 里（content 拼接），混着 chatDiagnosis 拼好的中文，需单开票做「诊断文案 i18n」"
+  }
+}

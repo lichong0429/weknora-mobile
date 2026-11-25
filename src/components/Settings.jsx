@@ -2,21 +2,46 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { useConfig } from '../contexts/ConfigContext.jsx';
+import { useI18n } from '../i18n/I18nContext.jsx';
 import { KB, Model } from '../api/endpoints.js';
 import { logout } from '../api/auth.js';
 import { resolveAuthMode, AUTH_MODE_ACCOUNT } from '../utils/auth.js';
+import { isAvailable as secureIsAvailable, clear as secureClear } from '../utils/secureStore.js';
 import { APP_VERSION } from '../utils/appVersion.js';
-import { AlertCircle, CheckCircle, Key, Globe, TestTube, Bug, Cpu, Database, Globe as WebSearchIcon, Activity, ChevronRight, Sun, Moon, Monitor, UserCircle, LogOut, RefreshCw } from 'lucide-react';
+import { noticeText } from '../utils/noticeText.js';
+import { AlertCircle, CheckCircle, Key, Globe, TestTube, Bug, Cpu, Database, Globe as WebSearchIcon, Activity, ChevronRight, Sun, Moon, Monitor, UserCircle, LogOut, RefreshCw, Languages, ShieldCheck, Lock } from 'lucide-react';
+
+// 语言选项的标签是**语言自己的名字**（endonym），任何界面语言下都保持原样：
+// 用户在被误设成看不懂的语言时，必须还能认出自己的母语那一项。
+// 因此这两条**故意不进字典**。
+const LANGUAGE_OPTIONS = [
+  { value: 'zh', label: '简体中文' },
+  { value: 'en', label: 'English' }
+];
 
 function Settings() {
   const navigate = useNavigate();
   const { config, setConfig, theme, setTheme } = useConfig();
+  const { t, lang, setLang } = useI18n();
   const [baseUrl, setBaseUrl] = useState(config.baseUrl || 'http://localhost:8080');
   const [apiKey, setApiKey] = useState(config.apiKey || '');
   const [testStatus, setTestStatus] = useState(null);
   const [testing, setTesting] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updateMsg, setUpdateMsg] = useState(null);
+  // 原生安全存储是否可用（同步判断即可；这里**不调 load()** —— 只是显示一个入口，
+  // 没必要为了探测状态去解密一次密文）
+  const [secureAvailable] = useState(() => secureIsAvailable());
+  const [forgetMsg, setForgetMsg] = useState(null);
+
+  // 忘记已保存的密码：先确认（不可撤销），再清掉密文并给出结果回显
+  const handleForgetSavedPassword = async () => {
+    if (!window.confirm(t('settings.forgetSavedPasswordConfirm'))) return;
+    const res = await secureClear();
+    setForgetMsg(res.ok
+      ? { type: 'success', key: 'settings.forgetSavedPasswordDone' }
+      : { type: 'error', key: 'settings.forgetSavedPasswordFailed', params: { detail: res.message || res.code } });
+  };
 
   // 复用 UpdatePrompt 挂在 window 上的检查函数（force=true 跳过缓存）。
   // 启动时的自动检查是静默的，这里必须给出确定结果 —— 否则用户无法分辨
@@ -27,21 +52,21 @@ function Settings() {
     try {
       const fn = window.__weknoraCheckUpdate;
       if (typeof fn !== 'function') {
-        setUpdateMsg({ type: 'error', text: '检查功能尚未就绪，请完全退出 App 后重试' });
+        setUpdateMsg({ type: 'error', key: 'settings.updateNotReady' });
         return;
       }
       const r = await fn(true);
       if (r?.status === 'update') {
-        setUpdateMsg({ type: 'success', text: `发现新版本 ${r.release?.tag || ''}，请在启动提示或 Release 页面下载` });
+        setUpdateMsg({ type: 'success', key: 'settings.updateFound', params: { tag: r.release?.tag || '' } });
       } else if (r?.status === 'latest') {
-        setUpdateMsg({ type: 'success', text: `已是最新版本（v${APP_VERSION}）` });
+        setUpdateMsg({ type: 'success', key: 'settings.updateLatest', params: { version: APP_VERSION } });
       } else if (r?.status === 'error' && r.reason === 'no-release') {
-        setUpdateMsg({ type: 'warn', text: '未取到发布信息：GitHub 匿名接口可能限流，请稍后再试' });
+        setUpdateMsg({ type: 'warn', key: 'settings.updateNoRelease' });
       } else {
-        setUpdateMsg({ type: 'error', text: `检查失败（${r?.reason || '未知原因'}）：请确认能访问 api.github.com` });
+        setUpdateMsg({ type: 'error', key: 'settings.updateFailed', params: { reason: r?.reason }, fallbacks: { reason: 'common.unknownError' } });
       }
     } catch (err) {
-      setUpdateMsg({ type: 'error', text: err.message || '检查失败' });
+      setUpdateMsg({ type: 'error', raw: err.message, fallbackKey: 'settings.updateFailedShort' });
     } finally {
       setCheckingUpdate(false);
     }
@@ -51,7 +76,7 @@ function Settings() {
 
   const handleSave = () => {
     setConfig({ baseUrl, apiKey });
-    setTestStatus({ type: 'success', message: '配置已保存' });
+    setTestStatus({ type: 'success', key: 'settings.saved' });
   };
 
   const handleTest = async () => {
@@ -62,9 +87,9 @@ function Settings() {
       const [kbRes, modelRes] = await Promise.all([KB.list(), Model.list()]);
       const kbCount = Array.isArray(kbRes?.data) ? kbRes.data.length : 0;
       const modelCount = Array.isArray(modelRes?.data) ? modelRes.data.length : 0;
-      setTestStatus({ type: 'success', message: `连接成功：知识库 ${kbCount} 个，模型 ${modelCount} 个` });
+      setTestStatus({ type: 'success', key: 'settings.testSuccess', params: { kbs: kbCount, models: modelCount } });
     } catch (err) {
-      setTestStatus({ type: 'error', message: err.message || '连接失败' });
+      setTestStatus({ type: 'error', raw: err.message, fallbackKey: 'settings.testFailed' });
     } finally {
       setTesting(false);
     }
@@ -75,65 +100,120 @@ function Settings() {
     setApiKey(config.apiKey || '');
   }, [config.baseUrl, config.apiKey]);
 
+  // 主题选项：value 是持久化枚举（system/light/dark），文案走字典
+  const themeOptions = [
+    { value: 'system', label: t('settings.themeSystem'), desc: t('settings.themeSystemDesc'), icon: Monitor },
+    { value: 'light', label: t('settings.themeLight'), desc: t('settings.themeLightDesc'), icon: Sun },
+    { value: 'dark', label: t('settings.themeDark'), desc: t('settings.themeDarkDesc'), icon: Moon }
+  ];
+
   return (
     <div className="p-4">
-      <h2 className="mb-4 text-xl font-bold text-gray-900">设置</h2>
+      <h2 className="mb-4 text-xl font-bold text-gray-900">{t('settings.title')}</h2>
 
       {/* 当前登录身份：一眼看出用的是哪种方式、是谁 */}
       <div className="mb-4 rounded-2xl bg-white p-4 shadow-sm">
         <h3 className="mb-3 flex items-center gap-2 font-semibold text-gray-900">
-          <UserCircle className="h-5 w-5 text-brand-500" /> 登录状态
+          <UserCircle className="h-5 w-5 text-brand-500" /> {t('settings.authTitle')}
         </h3>
         {isAccount ? (
           <div className="space-y-3">
             <div className="rounded-xl bg-brand-50 p-3">
               <p className="text-sm font-medium text-brand-800">
-                {config.authUser?.username || config.authEmail || '已登录'}
+                {/* 用户名/邮箱/空间名都是用户数据，不进字典 */}
+                {config.authUser?.username || config.authEmail || t('settings.authLoggedIn')}
               </p>
               {config.authUser?.email && (
                 <p className="mt-0.5 text-xs text-brand-600">{config.authUser.email}</p>
               )}
               {config.authTenantName && (
-                <p className="mt-0.5 text-xs text-brand-600">空间：{config.authTenantName}</p>
+                <p className="mt-0.5 text-xs text-brand-600">{t('settings.authTenant')}{config.authTenantName}</p>
               )}
-              <p className="mt-1.5 text-xs text-brand-500">使用账号密码登录（访问令牌会自动续期）</p>
+              <p className="mt-1.5 text-xs text-brand-500">{t('settings.authAccountHint')}</p>
             </div>
             <div className="flex gap-2">
               <button
                 onClick={() => navigate('/login')}
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
-                <RefreshCw className="h-4 w-4" /> 切换账号
+                <RefreshCw className="h-4 w-4" /> {t('settings.authSwitchAccount')}
               </button>
               <button
                 onClick={() => { logout(); navigate('/login', { replace: true }); }}
                 className="flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-3 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50"
               >
-                <LogOut className="h-4 w-4" /> 退出
+                <LogOut className="h-4 w-4" /> {t('settings.authLogout')}
               </button>
             </div>
           </div>
         ) : (
           <div className="rounded-xl bg-gray-50 p-3">
-            <p className="text-sm font-medium text-gray-800">使用 API Key 登录</p>
+            <p className="text-sm font-medium text-gray-800">{t('settings.authApiKeyMode')}</p>
             <p className="mt-0.5 text-xs text-gray-500">
-              {apiKey ? '已配置' : '未配置'}
-              {config.apiKey ? `（${config.apiKey.slice(0, 4)}****${config.apiKey.slice(-4)}）` : ''}
+              {apiKey ? t('settings.authConfigured') : t('settings.authNotConfigured')}
+              {/* Key 掩码是凭据片段，不是可翻译文案：用半角括号直接拼在句末 */}
+              {config.apiKey ? ` (${config.apiKey.slice(0, 4)}****${config.apiKey.slice(-4)})` : ''}
             </p>
             <button
               onClick={() => navigate('/login')}
               className="mt-3 w-full rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
             >
-              改用账号密码登录 / 更换 Key
+              {t('settings.authSwitchToApiKey')}
             </button>
           </div>
+        )}
+      </div>
+
+      {/* 账号与安全：本机保存的密码的清除入口。
+          只显示而不是探测「有没有存过」（不调 load()，避免无谓解密）。 */}
+      <div className="mb-4 rounded-2xl bg-white p-4 shadow-sm">
+        <h3 className="mb-3 flex items-center gap-2 font-semibold text-gray-900">
+          <ShieldCheck className="h-5 w-5 text-brand-500" /> {t('settings.securityTitle')}
+        </h3>
+        {secureAvailable ? (
+          <>
+            <p className="mb-3 flex items-start gap-1 text-xs text-gray-500">
+              <Lock className="mt-0.5 h-3 w-3 shrink-0" /> {t('settings.securityHint')}
+            </p>
+            <button
+              type="button"
+              onClick={handleForgetSavedPassword}
+              className="flex w-full items-center gap-3 rounded-xl border border-gray-200 p-3 text-left transition-colors hover:bg-gray-50 active:bg-gray-100"
+            >
+              <div className="rounded-xl bg-red-50 p-2 text-red-600">
+                <Lock className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-gray-900">{t('settings.forgetSavedPassword')}</p>
+                <p className="truncate text-xs text-gray-500">{t('settings.forgetSavedPasswordDesc')}</p>
+              </div>
+              <ChevronRight className="h-5 w-5 shrink-0 text-gray-400" />
+            </button>
+            {forgetMsg && (
+              <div
+                className={clsx(
+                  'mt-3 flex items-start gap-2 rounded-xl px-3 py-2 text-sm',
+                  forgetMsg.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+                )}
+              >
+                {forgetMsg.type === 'success'
+                  ? <CheckCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />}
+                <span className="break-words">{noticeText(forgetMsg, t)}</span>
+              </div>
+            )}
+          </>
+        ) : (
+          <p className="flex items-start gap-1 text-xs leading-relaxed text-gray-500">
+            <Lock className="mt-0.5 h-3 w-3 shrink-0" /> {t('settings.secureStorageUnavailable')}
+          </p>
         )}
       </div>
 
       <div className="space-y-4 rounded-2xl bg-white p-4 shadow-sm">
         <div>
           <label className="mb-1 flex items-center gap-2 text-sm font-medium text-gray-700">
-            <Globe className="h-4 w-4" /> WeKnora 地址
+            <Globe className="h-4 w-4" /> {t('settings.baseUrlTitle')}
           </label>
           <input
             type="url"
@@ -142,12 +222,12 @@ function Settings() {
             placeholder="http://localhost:8080"
             className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
-          <p className="mt-1 text-xs text-gray-500">示例：http://localhost:8080 或 https://weknora.example.com，不要加 /api/v1</p>
+          <p className="mt-1 text-xs text-gray-500">{t('settings.baseUrlHint')}</p>
         </div>
 
         <div>
           <label className="mb-1 flex items-center gap-2 text-sm font-medium text-gray-700">
-            <Key className="h-4 w-4" /> API Key
+            <Key className="h-4 w-4" /> {t('settings.apiKeyTitle')}
           </label>
           <input
             type="password"
@@ -157,8 +237,8 @@ function Settings() {
             className="w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
           <p className="mt-1 text-xs text-gray-500">
-            在 WeKnora 账户信息页面获取
-            {isAccount && '（仅在切换到 API Key 方式时生效）'}
+            {t('settings.apiKeyHint')}
+            {isAccount && t('settings.apiKeyHintAccount')}
           </p>
         </div>
 
@@ -170,7 +250,7 @@ function Settings() {
             )}
           >
             {testStatus.type === 'success' ? <CheckCircle className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
-            {testStatus.message}
+            {noticeText(testStatus, t)}
           </div>
         )}
 
@@ -179,7 +259,7 @@ function Settings() {
             onClick={handleSave}
             className="flex-1 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
           >
-            保存配置
+            {t('settings.save')}
           </button>
           <button
             onClick={handleTest}
@@ -187,18 +267,18 @@ function Settings() {
             className="flex items-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
           >
             <TestTube className="h-4 w-4" />
-            {testing ? '测试中…' : '测试连接'}
+            {testing ? t('settings.testing') : t('settings.test')}
           </button>
         </div>
       </div>
 
       <div className="mt-6 rounded-2xl bg-white p-4 shadow-sm">
-        <h3 className="mb-3 font-semibold text-gray-900">系统管理</h3>
+        <h3 className="mb-3 font-semibold text-gray-900">{t('settings.adminTitle')}</h3>
         <div className="space-y-2">
-          <SettingRow icon={Cpu} label="模型管理" desc="对话 / Embedding / Rerank / 视觉 / 语音模型" to="/models" />
-          <SettingRow icon={Database} label="向量库" desc="向量存储引擎配置与连接测试" to="/vector-stores" />
-          <SettingRow icon={WebSearchIcon} label="网络搜索源" desc="Google / Bing 等搜索 Provider" to="/web-searches" />
-          <SettingRow icon={Activity} label="系统信息" desc="版本、解析引擎、存储引擎状态" to="/system" />
+          <SettingRow icon={Cpu} label={t('settings.adminModels')} desc={t('settings.adminModelsDesc')} to="/models" />
+          <SettingRow icon={Database} label={t('settings.adminVectorStores')} desc={t('settings.adminVectorStoresDesc')} to="/vector-stores" />
+          <SettingRow icon={WebSearchIcon} label={t('settings.adminWebSearch')} desc={t('settings.adminWebSearchDesc')} to="/web-searches" />
+          <SettingRow icon={Activity} label={t('settings.adminSystem')} desc={t('settings.adminSystemDesc')} to="/system" />
         </div>
       </div>
 
@@ -206,15 +286,15 @@ function Settings() {
         onClick={() => navigate('/diagnostics')}
         className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-white p-4 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
       >
-        <Bug className="h-4 w-4" /> 诊断与调试
+        <Bug className="h-4 w-4" /> {t('settings.diagnostics')}
       </button>
 
       {/* 手动检查更新：启动时的自动检查是静默的（失败只在顶部提示条里），
           这里给一个确定性的入口 —— 「到底能不能检查到更新」不该要靠猜 */}
       <div className="mt-4 rounded-2xl bg-white p-4 shadow-sm">
-        <h3 className="mb-2 font-semibold text-gray-900">应用更新</h3>
+        <h3 className="mb-2 font-semibold text-gray-900">{t('settings.updateTitle')}</h3>
         <p className="mb-3 text-xs text-gray-500">
-          当前版本 v{APP_VERSION} · 启动时会自动检查；此处可随时手动触发
+          {t('settings.updateCurrent', { version: APP_VERSION })}
         </p>
         <button
           onClick={handleCheckUpdate}
@@ -222,7 +302,7 @@ function Settings() {
           className="flex w-full items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
         >
           {checkingUpdate ? <RefreshCw className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          {checkingUpdate ? '检查中…' : '检查更新'}
+          {checkingUpdate ? t('settings.updateChecking') : t('settings.updateCheck')}
         </button>
         {updateMsg && (
           <div
@@ -234,19 +314,15 @@ function Settings() {
           >
             {updateMsg.type === 'success' ? <CheckCircle className="mt-0.5 h-4 w-4 shrink-0" />
               : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />}
-            <span className="break-words">{updateMsg.text}</span>
+            <span className="break-words">{noticeText(updateMsg, t)}</span>
           </div>
         )}
       </div>
 
       <div className="mt-4 rounded-2xl bg-white p-4 shadow-sm">
-        <h3 className="mb-3 font-semibold text-gray-900">外观</h3>
+        <h3 className="mb-3 font-semibold text-gray-900">{t('settings.appearanceTitle')}</h3>
         <div className="space-y-2">
-          {[
-            { value: 'system', label: '跟随系统', desc: '随手机深色/浅色模式自动切换', icon: Monitor },
-            { value: 'light', label: '浅色', desc: '始终使用浅色主题', icon: Sun },
-            { value: 'dark', label: '深色', desc: '始终使用深色主题', icon: Moon }
-          ].map((opt) => {
+          {themeOptions.map((opt) => {
             const Icon = opt.icon;
             const active = theme === opt.value;
             return (
@@ -271,12 +347,41 @@ function Settings() {
             );
           })}
         </div>
+
+        {/* 界面语言：与主题同属「外观」，切换后立即生效并写入 localStorage；
+            不做重挂载（不写 key={lang}），因此聊天输入草稿/登录表单不会被清空 */}
+        <div className="mt-4 border-t border-gray-100 pt-3">
+          <p className="mb-2 flex items-center gap-2 text-sm font-medium text-gray-700">
+            <Languages className="h-4 w-4" /> {t('settings.languageTitle')}
+          </p>
+          <div className="flex gap-2">
+            {LANGUAGE_OPTIONS.map((opt) => {
+              const active = lang === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setLang(opt.value)}
+                  aria-pressed={active}
+                  className={clsx(
+                    'flex flex-1 items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors',
+                    active ? 'border-brand-500 bg-brand-50 text-brand-700' : 'border-gray-200 text-gray-700 hover:bg-gray-50'
+                  )}
+                >
+                  {/* 语言名是 endonym，两种界面语言下都原样显示 */}
+                  {opt.label}
+                  {active && <CheckCircle className="h-4 w-4 shrink-0 text-brand-500" />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       <div className="mt-4 rounded-2xl bg-white p-4 shadow-sm">
-        <h3 className="mb-2 font-semibold text-gray-900">关于</h3>
+        <h3 className="mb-2 font-semibold text-gray-900">{t('settings.aboutTitle')}</h3>
         <p className="text-sm text-gray-600 leading-relaxed">
-          WeKnora Mobile 是基于 WeKnora REST API 构建的移动端客户端，针对手机屏幕优化布局，支持知识库浏览、搜索、智能问答和会话管理。
+          {t('settings.aboutBody')}
         </p>
       </div>
     </div>

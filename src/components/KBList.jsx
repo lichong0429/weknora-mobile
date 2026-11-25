@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAsync } from '../hooks/useApi.js';
 import { useConfig } from '../contexts/ConfigContext.jsx';
+import { useI18n } from '../i18n/I18nContext.jsx';
 import { authFingerprint } from '../utils/auth.js';
 import { KB } from '../api/endpoints.js';
 import { extractList } from '../utils/list.js';
@@ -13,6 +14,7 @@ function KBList() {
   const navigate = useNavigate();
   const location = useLocation();
   const { config } = useConfig();
+  const { t } = useI18n();
   // 鉴权指纹：账号模式换的是 token 而非 apiKey，依赖数组必须跟着它变
   // （原来写死 config.apiKey，导致登录成功后页面不重新取数）
   const authFp = authFingerprint(config);
@@ -51,9 +53,12 @@ function KBList() {
     <div className="p-4">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h2 className="text-[26px] leading-9 font-bold text-ink">知识库</h2>
+          <h2 className="text-[26px] leading-9 font-bold text-ink">{t('kbList.title')}</h2>
           <p className="mt-0.5 text-xs text-ink-muted">
-            {kbs.length} 个知识库 · {kbs.reduce((sum, k) => sum + (Number(k.knowledge_count) || 0), 0).toLocaleString('en-US')} 文档
+            {t('kbList.summary', {
+              kbs: kbs.length,
+              docs: kbs.reduce((sum, k) => sum + (Number(k.knowledge_count) || 0), 0).toLocaleString('en-US')
+            })}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -62,20 +67,20 @@ function KBList() {
             disabled={loading}
             className="flex items-center gap-1 rounded-[13px] bg-white px-3 py-2.5 text-sm font-medium text-ink shadow-card hover:bg-surface-subtle disabled:opacity-50"
           >
-            <RefreshCw className={clsx('h-4 w-4', loading && 'animate-spin')} /> 刷新
+            <RefreshCw className={clsx('h-4 w-4', loading && 'animate-spin')} /> {t('common.refresh')}
           </button>
           <button
             onClick={() => setShowCreate(true)}
             className="flex items-center gap-1 rounded-[13px] bg-gradient-to-br from-brand-600 to-brand-400 px-3.5 py-2.5 text-sm font-medium text-white shadow-brand-lg hover:opacity-90"
           >
-            <Plus className="h-4 w-4" /> 新建
+            <Plus className="h-4 w-4" /> {t('kbList.new')}
           </button>
         </div>
       </div>
 
       {loading && (
         <div className="flex items-center justify-center py-12 text-ink-muted">
-          <Loader2 className="mr-2 h-5 w-5 animate-spin" /> 加载中…
+          <Loader2 className="mr-2 h-5 w-5 animate-spin" /> {t('common.loading')}
         </div>
       )}
 
@@ -102,14 +107,15 @@ function KBList() {
                 {kb.is_pinned && <Pin className="h-3.5 w-3.5 fill-brand-600 text-brand-600" />}
               </div>
               <p className="truncate text-xs text-ink-muted">
-                {kb.description || '暂无描述'} · {kb.knowledge_count || 0} 文档
+                {/* description 是用户数据；缺失时用字典里的占位文案 */}
+                {kb.description || t('common.noDescription')} · {t('common.docCount', { n: kb.knowledge_count || 0 })}
               </p>
             </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={(e) => { e.stopPropagation(); setActiveKb(kb); }}
                 className="rounded-full p-2 text-ink-faint hover:bg-surface-subtle"
-                aria-label="复制/移动"
+                aria-label={t('kbList.copyMove')}
               >
                 <Copy className="h-4 w-4" />
               </button>
@@ -119,7 +125,7 @@ function KBList() {
                   'rounded-full p-2',
                   kb.is_pinned ? 'bg-brand-50 text-brand-600' : 'text-ink-faint hover:bg-surface-subtle'
                 )}
-                aria-label={kb.is_pinned ? '取消置顶' : '置顶'}
+                aria-label={kb.is_pinned ? t('kbList.unpin') : t('kbList.pin')}
               >
                 <Pin className="h-4 w-4" />
               </button>
@@ -132,16 +138,16 @@ function KBList() {
       {!loading && !error && kbs.length === 0 && (
         <div className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-800">
           <div className="mb-2 flex items-center gap-2 font-semibold">
-            <AlertCircle className="h-4 w-4" /> 暂无知识库
+            <AlertCircle className="h-4 w-4" /> {t('kbList.emptyTitle')}
           </div>
           <p className="mb-2 text-xs leading-relaxed">
-            后端返回了空列表。如果网页端有知识库，通常是 API Key 没有对应到正确的租户。
+            {t('kbList.emptyDesc')}
           </p>
           <button
             onClick={() => navigate('/diagnostics')}
             className="flex items-center gap-1 rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-amber-800 shadow-sm hover:bg-amber-100"
           >
-            <Wrench className="h-3.5 w-3.5" /> 去诊断页排查
+            <Wrench className="h-3.5 w-3.5" /> {t('kbList.goDiagnostics')}
           </button>
         </div>
       )}
@@ -150,39 +156,40 @@ function KBList() {
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-4 sm:items-center">
           <div className="w-full max-w-md rounded-[24px] bg-white p-5 shadow-pill">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-ink">新建知识库</h3>
+              <h3 className="text-lg font-semibold text-ink">{t('kbList.createTitle')}</h3>
               <button onClick={() => setShowCreate(false)} className="rounded-full p-1 hover:bg-surface-subtle">
                 <X className="h-5 w-5 text-ink-muted" />
               </button>
             </div>
             <form onSubmit={handleCreate} className="space-y-3">
               <div>
-                <label className="mb-1 block text-sm font-medium text-ink-secondary">名称</label>
+                <label className="mb-1 block text-sm font-medium text-ink-secondary">{t('kbList.fieldName')}</label>
                 <input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   className="w-full rounded-[14px] border border-line bg-surface-soft px-3 py-2.5 text-sm text-ink placeholder:text-ink-faint focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  placeholder="知识库名称"
+                  placeholder={t('kbList.namePlaceholder')}
                 />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-ink-secondary">描述</label>
+                <label className="mb-1 block text-sm font-medium text-ink-secondary">{t('kbList.fieldDescription')}</label>
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   className="w-full rounded-[14px] border border-line bg-surface-soft px-3 py-2.5 text-sm text-ink placeholder:text-ink-faint focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                   rows={3}
-                  placeholder="可选描述"
+                  placeholder={t('kbList.descriptionPlaceholder')}
                 />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-ink-secondary">类型</label>
+                <label className="mb-1 block text-sm font-medium text-ink-secondary">{t('kbList.fieldType')}</label>
                 <select
                   value={type}
                   onChange={(e) => setType(e.target.value)}
                   className="w-full rounded-[14px] border border-line bg-surface-soft px-3 py-2.5 text-sm text-ink focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                 >
-                  <option value="document">文档</option>
+                  {/* value 是后端枚举，绝不能翻；只翻展示文案 */}
+                  <option value="document">{t('kbList.typeDocument')}</option>
                   <option value="faq">FAQ</option>
                 </select>
               </div>
@@ -190,7 +197,7 @@ function KBList() {
                 type="submit"
                 className="w-full rounded-[14px] bg-gradient-to-br from-brand-600 to-brand-400 py-2.5 text-sm font-medium text-white shadow-brand-lg hover:opacity-90"
               >
-                创建
+                {t('kbList.create')}
               </button>
             </form>
           </div>

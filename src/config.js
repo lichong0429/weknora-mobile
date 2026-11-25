@@ -1,10 +1,23 @@
 const CONFIG_KEY = 'weknora-mobile-config';
 
+// 配置默认值。
+//
+// 配置本身是「按需写入」的稀疏对象（老版本用户只有 apiKey + baseUrl），
+// 所以默认值放在读取侧兜底：各处直接读字段即可，不用到处写 `!== false`。
+//
+// savePassword：登录页「保存密码」勾选框的状态。
+//   默认 true（勾选）——密码只走原生 Keystore 加密通道（见 utils/secureStore.js），
+//   且**只有登录成功才会写入**；用户在无桥环境（浏览器）下不会真的落盘。
+const DEFAULT_CONFIG = {
+  savePassword: true
+};
+
 export function getConfig() {
   try {
-    return JSON.parse(localStorage.getItem(CONFIG_KEY)) || {};
+    const stored = JSON.parse(localStorage.getItem(CONFIG_KEY)) || {};
+    return { ...DEFAULT_CONFIG, ...stored };
   } catch {
-    return {};
+    return { ...DEFAULT_CONFIG };
   }
 }
 
