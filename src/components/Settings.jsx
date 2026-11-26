@@ -9,6 +9,7 @@ import { resolveAuthMode, AUTH_MODE_ACCOUNT } from '../utils/auth.js';
 import { isAvailable as secureIsAvailable, clear as secureClear } from '../utils/secureStore.js';
 import { APP_VERSION } from '../utils/appVersion.js';
 import { noticeText } from '../utils/noticeText.js';
+import { describeCheckFailure } from '../utils/updateMessages.js';
 import { AlertCircle, CheckCircle, Key, Globe, TestTube, Bug, Cpu, Database, Globe as WebSearchIcon, Activity, ChevronRight, Sun, Moon, Monitor, UserCircle, LogOut, RefreshCw, Languages, ShieldCheck, Lock } from 'lucide-react';
 
 // 语言选项的标签是**语言自己的名字**（endonym），任何界面语言下都保持原样：
@@ -59,11 +60,12 @@ function Settings() {
       if (r?.status === 'update') {
         setUpdateMsg({ type: 'success', key: 'settings.updateFound', params: { tag: r.release?.tag || '' } });
       } else if (r?.status === 'latest') {
+        // 自动检查是静默的，所以「已是最新」只在这里给一句确认 —— 用户按了按钮就该有回执
         setUpdateMsg({ type: 'success', key: 'settings.updateLatest', params: { version: APP_VERSION } });
-      } else if (r?.status === 'error' && r.reason === 'no-release') {
-        setUpdateMsg({ type: 'warn', key: 'settings.updateNoRelease' });
       } else {
-        setUpdateMsg({ type: 'error', key: 'settings.updateFailed', params: { reason: r?.reason }, fallbacks: { reason: 'common.unknownError' } });
+        // 失败原因 → 人话（{key, params}，渲染期翻译，切语言会跟着变）；
+        // 不再把 'no-release' / 'HTTP 403' 这类原因码原样丢给用户看。
+        setUpdateMsg({ type: 'warn', ...describeCheckFailure(r?.reason) });
       }
     } catch (err) {
       setUpdateMsg({ type: 'error', raw: err.message, fallbackKey: 'settings.updateFailedShort' });

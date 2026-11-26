@@ -8,6 +8,7 @@ import { APP_VERSION } from './appVersion.js';
 import {
   RELEASE_LATEST_API,
   evaluateUpdate,
+  planCheckOutcome,
   readCache,
   writeCache,
   getSkippedVersion
@@ -59,19 +60,17 @@ export async function checkForUpdate({ force = false, currentVersion = APP_VERSI
   if (!release) {
     try {
       const raw = await fetchJson(RELEASE_LATEST_API);
-      const verdict = evaluateUpdate(raw, currentVersion);
-      // 无效响应（没有 APK 资产等）不入缓存，下次再试
-      if (verdict.status === 'invalid') {
-        report({ status: 'error', reason: 'invalid' });
-        return { status: 'error', reason: 'invalid' };
+      // 结论映射只有一处（纯函数）：latest 永远映射成 latest，
+      // 不会因为「没带 release」掉进 error —— 那正是 v1.9.9 修掉的启动误报。
+      const outcome = planCheckOutcome(evaluateUpdate(raw, currentVersion));
+      if (outcome.status === 'error') {
+        // invalid = 没有可安装的 APK；no-release = evaluator 自身被改坏（理论上不可达）
+        report({ status: 'error', reason: outcome.reason });
+        return { status: 'error', reason: outcome.reason };
       }
-      release = verdict.release || null;
-      if (!release) {
-        report({ status: 'error', reason: 'no-release' });
-        return { status: 'error', reason: 'no-release' };
-      }
+      release = outcome.release;
       // 缓存分档：判定为「有更新」才走长档（6h），否则短档（30min）
-      writeCache(release, verdict.status === 'update');
+      writeCache(release, outcome.status === 'update');
     } catch (err) {
       // 断网 / 限流 / 被拦截 —— 不弹窗、不打扰，但必须留下可查的原因
       const reason = (err && err.name === 'AbortError') ? 'timeout' : (err?.message || 'network');

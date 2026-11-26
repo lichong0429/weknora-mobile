@@ -10,8 +10,10 @@
 import {
   parseVersion, compareVersions, isNewerVersion, pickApkAsset,
   normalizeRelease, evaluateUpdate, releaseNotesPreview, formatBytes,
-  readCache, writeCache
+  readCache, writeCache, planCheckOutcome
 } from '../src/utils/updateChecker.js';
+import { describeCheckFailure, isRateLimitReason } from '../src/utils/updateMessages.js';
+import { translate } from '../src/i18n/index.js';
 
 let pass = 0;
 const failures = [];
@@ -160,6 +162,100 @@ console.log('\n--- 缓存分档 ---');
   checkTrue('E 损坏缓存返回 null', readCache(3000_000) === null);
   store.set('weknora_update_cache_v1', JSON.stringify({ release: rel }));
   checkTrue('E 缺 at 字段返回 null', readCache(3000_000) === null);
+}
+
+// ---------------- 9) 【v1.9.9 回归】「已是最新」不能被当成失败 ----------------
+//
+// 事故：evaluateUpdate 在 status==='latest' 时**不返回 release**，于是服务层
+//   release = verdict.release || null  →  null → { status:'error', reason:'no-release' }
+// 只要已是最新版（最常见情况），每次启动都弹「检查更新失败：未取到发布信息
+// （可能触发了匿名接口限流）」。文案也是错的：真限流会抛 HTTP 403，走 unknown 分支。
+console.log('\n--- 已是最新 与 失败 的区分（v1.9.9 回归）---');
+{
+  // 1) tag 与当前版本相同 → latest，且**必须带 release**（本次 bug 的直接回归断言）
+  const same = evaluateUpdate(RAW, '1.8.0');
+  check('同版本 → latest', same.status, 'latest');
+  checkTrue('同版本 → 必须带 release（缺它就会被服务层误判成 error/no-release）',
+    Boolean(same.release && same.release.apkUrl));
+
+  // 2) tag 更高且有 APK 资产 → update
+  const newer = evaluateUpdate(RAW, '1.7.5');
+  check('更高版本 → update', newer.status, 'update');
+  checkTrue('更高版本 → 带 release', Boolean(newer.release && newer.release.apkUrl));
+
+  // 3) 无 APK 资产 → 仍为 invalid，且不带 release（修 #1 不能把真异常吞成 latest）
+  const noApk = evaluateUpdate({ ...RAW, assets: [] }, '1.7.5');
+  check('无 APK → 仍是 invalid', noApk.status, 'invalid');
+  check('无 APK → 不带 release', noApk.release, undefined);
+
+  // 4) draft / prerelease → latest 且带 release
+  checkTrue('预发布 → latest 且带 release',
+    evaluateUpdate({ ...RAW, prerelease: true, tag_name: 'v9.9.9' }, '1.7.5').release?.apkUrl === 'https://x/a.apk');
+  checkTrue('草稿 → latest 且带 release',
+    evaluateUpdate({ ...RAW, draft: true, tag_name: 'v9.9.9' }, '1.7.5').release?.apkUrl === 'https://x/a.apk');
+}
+
+// ---------------- 10) 结论映射（服务层不再自己写 if 链）----------------
+//
+// 说明：这里断言的是纯函数而不是 updateService 本体 —— updateService 依赖
+// appVersion.js（静态 import ../../package.json），Node 直接加载会报
+// ERR_IMPORT_ATTRIBUTE_MISSING。把映射抽成 planCheckOutcome 后，
+// 「latest 被误判成 error」这条路径就能在 check 里被真正锁住。
+console.log('\n--- 结论映射（latest 不得变 error）---');
+{
+  // 1) 已是最新 → latest（本次 bug 的直接回归断言）
+  const latestOutcome = planCheckOutcome(evaluateUpdate(RAW, '1.8.0'));
+  check('已是最新 → latest', latestOutcome.status, 'latest');
+  check('已是最新 → 不带 reason', latestOutcome.reason, undefined);
+  checkTrue('已是最新 → release 透出（供缓存使用）', Boolean(latestOutcome.release?.apkUrl));
+
+  // 2) 有新版本 → update
+  const updateOutcome = planCheckOutcome(evaluateUpdate(RAW, '1.7.5'));
+  check('有新版本 → update', updateOutcome.status, 'update');
+  checkTrue('有新版本 → release 透出', Boolean(updateOutcome.release?.apkUrl));
+
+  // 3) 无 APK → error/invalid（真异常不能被吞成 latest）
+  const invalidOutcome = planCheckOutcome(evaluateUpdate({ ...RAW, assets: [] }, '1.7.5'));
+  check('无 APK → error', invalidOutcome.status, 'error');
+  check('无 APK → reason=invalid', invalidOutcome.reason, 'invalid');
+
+  // 4) draft / prerelease → latest（带 release）
+  check('预发布 → latest', planCheckOutcome(evaluateUpdate({ ...RAW, prerelease: true, tag_name: 'v9.9.9' }, '1.7.5')).status, 'latest');
+  check('草稿 → latest', planCheckOutcome(evaluateUpdate({ ...RAW, draft: true, tag_name: 'v9.9.9' }, '1.7.5')).status, 'latest');
+
+  // 5) no-release 的语义只能是「evaluator 被改坏」：verdict 声称 latest/update 却没有 release
+  check('latest 却缺 release → error/no-release（语义唯一）',
+    planCheckOutcome({ status: 'latest' }).reason, 'no-release');
+  check('update 却缺 release → error/no-release',
+    planCheckOutcome({ status: 'update' }).reason, 'no-release');
+  check('空 verdict → error/invalid', planCheckOutcome(null).status, 'error');
+}
+
+// ---------------- 11) 失败原因 → 可翻译文案 ----------------
+console.log('\n--- 失败原因文案 ---');
+{
+  check('空原因 → unknown', describeCheckFailure('').key, 'settings.updateFailUnknown');
+  check('timeout → 超时文案', describeCheckFailure('timeout').key, 'settings.updateFailTimeout');
+  check('invalid → 缺少 APK 文案', describeCheckFailure('invalid').key, 'settings.updateFailInvalid');
+  check('no-release → 缺少发布信息文案', describeCheckFailure('no-release').key, 'settings.updateFailNoRelease');
+  check('HTTP 403 → 限流文案', describeCheckFailure('HTTP 403').key, 'settings.updateFailRateLimited');
+  check('HTTP 429 → 限流文案', describeCheckFailure('HTTP 429').key, 'settings.updateFailRateLimited');
+  check('HTTP 500 → 通用 HTTP 文案', describeCheckFailure('HTTP 500').key, 'settings.updateFailHttp');
+  check('网络错误 → 网络文案', describeCheckFailure('Failed to fetch').key, 'settings.updateFailNetwork');
+  checkTrue('限流判定只认 403/429',
+    isRateLimitReason('HTTP 403') && isRateLimitReason('HTTP 429') && !isRateLimitReason('HTTP 500'));
+
+  // 文案更正：no-release 不能再甩锅给「限流」
+  const zhNoRelease = translate('zh', 'settings.updateFailNoRelease');
+  checkTrue('中文 no-release 文案不再提限流',
+    zhNoRelease.includes('没有可用的发布信息') && !zhNoRelease.includes('限流'), zhNoRelease);
+  const enNoRelease = translate('en', 'settings.updateFailNoRelease');
+  checkTrue('英文 no-release 文案不再提限流',
+    /no usable release info/i.test(enNoRelease) && !/rate limit/i.test(enNoRelease), enNoRelease);
+  checkTrue('中文限流文案带状态码',
+    translate('zh', 'settings.updateFailRateLimited', { status: 'HTTP 403' }).includes('HTTP 403'));
+  checkTrue('英文限流文案带状态码',
+    translate('en', 'settings.updateFailRateLimited', { status: 'HTTP 429' }).includes('HTTP 429'));
 }
 
 console.log();

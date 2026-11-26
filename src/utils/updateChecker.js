@@ -87,11 +87,38 @@ export function normalizeRelease(raw) {
  */
 export function evaluateUpdate(rawRelease, currentVersion) {
   const release = rawRelease && rawRelease.apkUrl ? rawRelease : normalizeRelease(rawRelease);
+  // invalid 表示**真的解析不出可用发布**（无 tag / 无 APK 资产）—— 不带 release，调用方据此报错
   if (!release) return { status: 'invalid' };
   // 草稿/预发布不作为自动更新目标（仓库若用了会误推给全部用户）
-  if (release.draft || release.prerelease) return { status: 'latest' };
-  if (!isNewerVersion(release.version, currentVersion)) return { status: 'latest' };
+  //
+  // 【v1.9.9 修正】latest 也必须把 release 带出去。
+  // 原实现只给 'update' 带 release，于是 service 层 `verdict.release || null` 拿到 null，
+  // 把「已是最新」误判成 `error / no-release` —— 只要用户装的已是最新版，每次启动都会弹
+  // 「检查更新失败：未取到发布信息（可能触发了匿名接口限流）」。根因不在限流，在缺字段。
+  if (release.draft || release.prerelease) return { status: 'latest', release };
+  if (!isNewerVersion(release.version, currentVersion)) return { status: 'latest', release };
   return { status: 'update', release, current: parseVersion(currentVersion) ? String(currentVersion) : '0.0.0' };
+}
+
+/**
+ * 把 evaluateUpdate 的结论映射成服务层状态（**纯函数**）。
+ *
+ * 为什么要有这一层：老实现把这段 if 链散写在 updateService 里，写成
+ *   release = verdict.release || null;  if (!release) → error/no-release
+ * 而 evaluateUpdate 当时在 latest 时恰好不带 release —— 于是「已是最新」被误判成
+ * 「取不到发布信息」，每次启动都弹检查更新失败。
+ * 现在映射只有一处、且是纯的：`latest` 永远映射成 latest，不会因为缺字段掉进 error；
+ * `no-release` 的语义被锁死为「evaluator 坏了」这一种（update/latest 都必须带 release）。
+ *
+ * @param {{status: 'update'|'latest'|'invalid', release?: object}} verdict
+ * @returns {{status: 'update'|'latest'|'error', reason?: string, release?: object}}
+ */
+export function planCheckOutcome(verdict) {
+  if (!verdict || verdict.status === 'invalid') return { status: 'error', reason: 'invalid' };
+  // 走到这里 status 只可能是 update / latest，两者都必须带 release；没有就是 evaluator 被改坏
+  if (!verdict.release) return { status: 'error', reason: 'no-release' };
+  if (verdict.status === 'update') return { status: 'update', release: verdict.release };
+  return { status: 'latest', release: verdict.release };
 }
 
 /** 取更新说明的前若干行用于弹窗展示（去掉空行与 markdown 分隔线） */
